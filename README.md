@@ -54,8 +54,14 @@ agent-bridge/
 ├── poller/
 │   └── watch_pane.sh                 # fallback for agents with no hook system
 └── scripts/
-    ├── start_session.sh              # launch a named tmux session running the agent
-    └── install.sh                    # one-time setup
+    ├── lib/session_name.sh           # shared: folder -> tmux session name
+    ├── start_session.sh              # launch a session for a project directory
+    ├── claude-wrapper.sh             # template for the transparent `claude` shim
+    ├── install_wrapper.sh            # installs that shim (fully automatic mode)
+    ├── bot_ctl.sh                    # start/stop/status/logs for the bot
+    ├── install.sh                    # one-time setup: wires the hooks
+    ├── install_autostart.ps1         # Windows: run the bot at logon
+    └── final_test.sh                 # post-login end-to-end check
 ```
 
 ## Creating the Discord bot
@@ -103,17 +109,88 @@ repo's real path into the hook commands, and appends its hooks alongside any
 you already had rather than replacing them. Re-running it is safe -- it
 replaces its own previous entries instead of stacking up duplicates.
 
-Then run the two long-lived processes:
+Then start the bot, and have it come back on its own after a reboot:
 
 ```bash
-~/.venvs/agent-bridge/bin/python bot/bot.py   # wrap in systemd/pm2/tmux so it survives reboots
-./scripts/start_session.sh myproject          # defaults to `claude`; 2nd arg for e.g. codex
+./scripts/bot_ctl.sh start        # start now (supervised: restarts if it crashes)
+./scripts/bot_ctl.sh status       # running? last few log lines?
+./scripts/bot_ctl.sh logs         # tail the log
+./scripts/bot_ctl.sh stop
 ```
 
-A simple way to keep the bot alive is to give it its own tmux session:
+On Windows/WSL, register the logon task so it survives a reboot. Run this from
+PowerShell, in the repo directory (no admin needed):
+
+```powershell
+.\scripts\install_autostart.ps1              # remove later with -Uninstall
+```
+
+> **Why a Windows task rather than a systemd service?** A service inside WSL only
+> runs while the distro is up. After a Windows reboot the distro isn't running at
+> all until something starts it, so the trigger has to live on the Windows side.
+> The task starts the distro *and* the bot. On a native Linux box, a systemd user
+> unit running `bot_ctl.sh supervise` is the equivalent.
+
+## Using it on your other projects
+
+**There is no per-project setup.** The hooks live in `~/.claude/settings.json`,
+which is user-level, so they already fire for every project on the machine. The
+bot is shared and routes purely by tmux session name -- it neither knows nor
+cares which directory anything is in.
+
+### Fully automatic: the `claude` wrapper
 
 ```bash
-tmux new -d -s bridge-bot "cd $PWD && ~/.venvs/agent-bridge/bin/python bot/bot.py"
+./scripts/install_wrapper.sh      # once; --uninstall to remove
+```
+
+After this, just type `claude` in any project and the bridge turns itself on:
+
+```bash
+cd ~/code/portfolio && claude     # that's it
+```
+
+The wrapper starts the bot if it isn't running, puts the session in tmux named
+after the folder, then runs the real claude. Re-running in the same folder
+reattaches rather than making a second session.
+
+It stays out of the way when wrapping would be wrong -- `claude -p ...`, piped
+or non-TTY invocations, and anything already inside tmux all `exec` straight
+through to the real binary. `AGENT_BRIDGE_WRAP=0 claude` skips it for one run.
+
+The wrapper installs to `~/.agent-bridge/bin/claude`, deliberately *not* over
+`~/.local/bin/claude`, so Claude Code's auto-updater keeps managing its own
+launcher. The PATH line goes in **both** `~/.bashrc` and `~/.profile`: Ubuntu's
+`.profile` sources `.bashrc` first and only then prepends `~/.local/bin`, so a
+line in `.bashrc` alone ends up behind the real binary in login shells and the
+wrapper silently never runs.
+
+### Manual: launch a session yourself
+
+If you'd rather not shadow the `claude` command:
+
+```bash
+cd ~/code/portfolio && /path/to/agent-bridge/scripts/start_session.sh
+```
+
+That opens a tmux session named after the folder (`portfolio`), running `claude`
+in it. Notifications arrive labelled `🟡 [portfolio] ...`, and a plain Discord
+reply goes there because the state file tracks whichever session pinged last.
+
+```bash
+./scripts/start_session.sh                      # session named after $PWD
+./scripts/start_session.sh ~/code/api           # from anywhere
+./scripts/start_session.sh ~/code/api codex     # run codex instead of claude
+SESSION_NAME=api-v2 ./scripts/start_session.sh ~/code/api   # override the name
+```
+
+Run several at once and target them explicitly from Discord with
+`!portfolio your reply` / `!api your reply`; `!sessions` lists what's live.
+
+Worth putting on your PATH so it's available from any directory:
+
+```bash
+ln -s /path/to/agent-bridge/scripts/start_session.sh ~/.local/bin/agent-session
 ```
 
 ## Complete flow
