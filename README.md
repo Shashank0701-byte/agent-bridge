@@ -88,6 +88,26 @@ agent-bridge/
 > "content in DMs with the app." Since this bot only ever listens in your DMs,
 > it gets full message content without it -- one less approval to chase.
 
+### Which notifications reach your phone
+
+Claude Code's `Notification` event covers several notification *types*, and the
+hook config matches only the ones that actually mean "blocked on you":
+
+| Type | DM? | Why |
+|------|-----|-----|
+| `permission_prompt`      | yes | Claude is asking to run something |
+| `agent_needs_input`      | yes | a subagent needs an answer |
+| `elicitation_dialog`     | yes | Claude is asking you a question |
+| `elicitation_url_dialog` | yes | Claude wants you to open a URL |
+| `idle_prompt`            | no  | you just left the session sitting at the prompt |
+| `auth_success`           | no  | not a question |
+| `agent_completed`        | no  | the `Stop` hook already covers this |
+
+Without a matcher the event fires for *every* type, and `idle_prompt` in
+particular pings you each time a session goes quiet -- which is constantly.
+Widen or narrow the `matcher` in
+`config/claude-settings.snippet.json` to taste, then re-run `./scripts/install.sh`.
+
 ## Setup
 
 ```bash
