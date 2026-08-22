@@ -32,8 +32,12 @@ case "${1:-status}" in
   start)
     if running; then echo "already running (pid $(cat "$PIDFILE"))"; exit 0; fi
     [ -x "$VENV" ] || { echo "venv missing: $VENV" >&2; exit 1; }
-    nohup "$REPO/scripts/bot_ctl.sh" supervise >/dev/null 2>&1 &
-    sleep 3
+    # setsid puts the supervisor in its OWN process group. Without it, a
+    # non-interactive shell shares its process group with background jobs, and
+    # `stop` (which kills the group) would take its own caller down with it.
+    setsid nohup "$REPO/scripts/bot_ctl.sh" supervise >/dev/null 2>&1 &
+    # Poll rather than sleep a fixed time: launching from a /mnt drive is slow.
+    for _ in $(seq 1 30); do running && break; sleep 1; done
     running && echo "started (pid $(cat "$PIDFILE"))" || { echo "failed to start; see $LOG" >&2; exit 1; }
     ;;
 
