@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__AGENT_BRIDGE_DIR__/hooks/notify.sh input" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "__AGENT_BRIDGE_DIR__/hooks/notify.sh done" }
+        ]
+      }
+    ]
+  }
+}
