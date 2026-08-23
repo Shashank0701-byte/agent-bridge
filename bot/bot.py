@@ -10,6 +10,7 @@ your tmux sessions live: tmux is driven locally, not over the network.
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -26,6 +27,22 @@ ALLOWED_USER_ID = int(os.environ["DISCORD_USER_ID"])
 # start a reply.
 PREFIX = "!"
 BUFFER = "agent-bridge"
+
+# Two ways to aim a reply at a session. The "[name] text" form matters most:
+# it mirrors the notification being replied to ("[PromptWall] Needs input: ..."),
+# which is the format people naturally copy. Session names never contain
+# spaces (see lib/session_name.sh), so restricting the captured name to
+# [A-Za-z0-9_-] keeps ordinary prose like "[see below] do it" from being
+# mistaken for a target.
+TARGET_PATTERNS = (
+    re.compile(r"^!\s*([A-Za-z0-9_-]+)\s*(.*)$", re.DOTALL),
+    re.compile(r"^\[\s*([A-Za-z0-9_-]+)\s*\]\s*(.*)$", re.DOTALL),
+)
+
+# Every message the bridge sends is tagged "[session] ...". Replying to one
+# in Discord is the most natural way to answer it, so pull the session name
+# back out of whatever message was replied to.
+SESSION_TAG_RE = re.compile(r"\[([A-Za-z0-9_-]+)\]")
 
 STATE_FILE = Path(
     os.environ.get("AGENT_BRIDGE_STATE", "~/.agent-bridge/state.json")
@@ -92,6 +109,36 @@ def type_into_session(target: str, text: str) -> tuple[bool, str]:
     return True, ""
 
 
+async def session_from_reply(message, sessions):
+    """Resolve the target session from a Discord reply, or None.
+
+    Replying to "[PromptWall] Needs input: ..." should answer PromptWall without
+    having to retype the name. The referenced message is usually already cached
+    on `reference.resolved`; if not, fetch it. A deleted referenced message
+    resolves to DeletedReferencedMessage rather than a Message, so anything that
+    is not a Message is treated as unusable.
+    """
+    ref = message.reference
+    if ref is None or ref.message_id is None:
+        return None
+
+    referenced = ref.resolved
+    if referenced is not None and not isinstance(referenced, discord.Message):
+        return None                      # deleted
+    if referenced is None:
+        try:
+            referenced = await message.channel.fetch_message(ref.message_id)
+        except Exception as e:
+            log.warning("could not fetch replied-to message: %s", e)
+            return None
+
+    match = SESSION_TAG_RE.search(referenced.content or "")
+    if not match:
+        return None
+    name = match.group(1)
+    return next((s for s in sessions if s.lower() == name.lower()), None)
+
+
 # Privileged intents stay off. Discord always delivers full message content for
 # DMs with the bot, and DMs are the only place this listens.
 client = discord.Client(intents=discord.Intents.default())
@@ -119,17 +166,33 @@ async def on_message(message: discord.Message):
         return
     sessions = tmux_sessions()
 
-    # Explicit targeting: "!session-name your reply text"
+    # Explicit targeting: "!name your reply" or "[name] your reply".
     target = None
-    if text.startswith(PREFIX):
-        parts = text[len(PREFIX):].split(" ", 1)
-        candidate = parts[0]
-        if candidate == "sessions":
+    for pattern in TARGET_PATTERNS:
+        m = pattern.match(text)
+        if not m:
+            continue
+        candidate, rest = m.group(1), m.group(2).strip()
+        if candidate.lower() == "sessions":
             await message.channel.send(f"Live sessions: {', '.join(sessions) or 'none'}")
             return
-        if candidate in sessions:
-            target = candidate
-            text = parts[1].strip() if len(parts) > 1 else ""
+        # Case-insensitive: phone keyboards capitalise the first letter.
+        target = next((s for s in sessions if s.lower() == candidate.lower()), None)
+        if target is None:
+            # Refuse rather than fall through to the last-pinged session.
+            # Falling through types this text into a DIFFERENT live agent,
+            # which is far worse than making you retype it.
+            await message.channel.send(
+                f"No session named `{candidate}`. Live sessions: "
+                f"{', '.join(sessions) or 'none'}.\nNothing was sent."
+            )
+            return
+        text = rest
+        break
+
+    # Next best: a Discord reply to one of the bridge's own messages.
+    if target is None:
+        target = await session_from_reply(message, sessions)
 
     if target is None:
         target = read_state().get("last_session")
@@ -137,7 +200,7 @@ async def on_message(message: discord.Message):
     if not target or target not in sessions:
         await message.channel.send(
             f"No active tmux session to target. Live sessions: {', '.join(sessions) or 'none'}\n"
-            f"Use `{PREFIX}session-name your reply` to pick one explicitly."
+            f"Reply to one of my messages, or use `[session-name] your reply`."
         )
         return
 

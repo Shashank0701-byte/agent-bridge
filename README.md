@@ -222,9 +222,21 @@ ln -s /path/to/agent-bridge/scripts/start_session.sh ~/.local/bin/agent-session
    JSON off stdin, extracts the question, records `myproject` as the
    "last active session" in a small state file, and DMs you.
 3. You're away -> phone buzzes: `🟡 [myproject] Needs input: ...`.
-4. You reply in the DM -- plain text if it's your only session, or
-   `!myproject your reply` to target explicitly when you've got more than one
-   running. `!sessions` lists what's live.
+4. You reply in the DM. Three ways to say which session you mean, tried in
+   this order:
+
+   | How | When to use it |
+   |-----|----------------|
+   | **Use Discord's reply button** on the notification | easiest, and the point of the design -- the session is read off the message you replied to |
+   | `[myproject] your reply` (or `!myproject your reply`) | naming it explicitly; matching is case-insensitive |
+   | plain text, no prefix | goes to whichever session pinged last |
+
+   `!sessions` (or `[sessions]`) lists what's live.
+
+   If you name a session that isn't running, the bridge says so and sends
+   **nothing**. It deliberately does not fall back to the last-pinged session,
+   because typing your answer into a different live agent is worse than making
+   you retype it.
 5. `bot.py` receives it, verifies the sender is you, resolves the target
    session, and types the text into that pane followed by Enter.
 6. The agent sees the input exactly as if you'd typed it and continues.
