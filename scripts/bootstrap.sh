@@ -105,7 +105,7 @@ fi
 # ------------------------------------------------------------------ hooks ---
 step "Claude Code hooks"
 bash "$REPO/scripts/install.sh" >/dev/null 2>&1 \
-  && ok "Notification + Stop hooks wired into ~/.claude/settings.json" \
+  && ok "hooks wired into ~/.claude/settings.json (Notification, Stop, AskUserQuestion)" \
   || bad "install.sh failed"
 
 # ---------------------------------------------------------------- wrapper ---
