@@ -25,18 +25,40 @@ Claude Code, Codex, or anything else you run in a terminal.
                           agent resumes as if you typed it
 ```
 
-## Requirements
+## Quick start
 
-- **tmux.** This is the load-bearing dependency and it has no Windows build.
-  On Windows, run everything inside WSL2 -- the agent, tmux, and the bot all
-  need to live on the same machine.
-- **Python 3.8+** (`python3` or `python`, either is detected).
-- A Discord account.
+```powershell
+git clone <this repo>; cd agent-bridge
+.\install.ps1                     # Windows: installs WSL2 + Ubuntu, then everything else
+```
 
 ```bash
-# WSL2 / Ubuntu
-sudo apt update && sudo apt install -y tmux python3 python3-pip
+./scripts/bootstrap.sh            # macOS / Linux / an existing WSL distro
 ```
+
+Then three things the script can't do for you: create a Discord bot (below),
+`claude auth login`, and fill in `.env`. Re-run the script afterwards and it
+starts the bot.
+
+## Requirements
+
+Read these before installing -- two of them are hard gates:
+
+- **A paid Claude plan.** Claude Code needs Pro, Max, Team, Enterprise, or a
+  Console account. The free claude.ai tier does **not** include it, and there is
+  no way around this.
+- **Your own Discord bot.** The bridge is single-user by design: it answers one
+  allowlisted user ID. Bots aren't shareable between people -- everyone who
+  wants this creates their own (about five minutes, steps below).
+- **tmux**, the load-bearing dependency, which has no Windows build. On Windows
+  everything runs inside WSL2 -- agent, tmux, and bot on the same machine. If
+  WSL isn't installed yet, `wsl --install` needs one Administrator PowerShell
+  and a reboot; `install.ps1` tells you so and stops rather than half-finishing.
+- **Python 3.8+** (`python3` or `python`, either is detected).
+
+Tested on Ubuntu 22.04 and 24.04 under WSL2, from a cold install. The macOS and
+native-Linux paths in `bootstrap.sh` are written but have not been run -- expect
+rough edges there and tell me about them.
 
 ## Folder structure
 
