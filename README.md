@@ -299,11 +299,24 @@ Two implementation notes, both learned the hard way:
 
 For agents without a native hook system (Codex, as far as could be confirmed
 at the time this was written -- worth checking their current docs), use
-`poller/watch_pane.sh <session-name>` instead of relying on hooks. It polls
-the pane, and once output goes idle for a few seconds and the last line
-matches a prompt-like pattern, it fires the same `notify.sh`. It's a
-heuristic (tune `PROMPT_REGEX` for your tool's actual prompts), not as
-precise as a real hook.
+`poller/watch_pane.sh <session-name>` instead of relying on hooks:
+
+```bash
+./poller/watch_pane.sh mysession
+IDLE_SECS=5 PROMPT_REGEX='\(y/n\)|continue\?' ./poller/watch_pane.sh mysession
+```
+
+It polls the pane, and once the visible output has been unchanged for
+`IDLE_SECS` and a recent line matches `PROMPT_REGEX`, it fires the same
+`notify.sh` with the line that matched. It stops on its own when the session
+goes away.
+
+This is a heuristic, not a hook: expect to tune `PROMPT_REGEX` per tool. Two
+things it gets right that are easy to get wrong -- `tmux capture-pane` returns
+the full pane height and output sits at the *top*, so blank lines are stripped
+before looking at the tail (otherwise nothing ever matches); and the line
+reported is the one that matched, not simply the last line, since a prompt is
+often followed by an input row.
 
 ## Verifying it works
 
