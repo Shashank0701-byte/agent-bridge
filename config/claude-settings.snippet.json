@@ -1,5 +1,13 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "__AGENT_BRIDGE_DIR__/hooks/ask_options.sh" }
+        ]
+      }
+    ],
     "Notification": [
       {
         "matcher": "permission_prompt|agent_needs_input|elicitation_dialog|elicitation_url_dialog",

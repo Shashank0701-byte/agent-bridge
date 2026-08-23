@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import discord
@@ -44,10 +45,17 @@ TARGET_PATTERNS = (
 # back out of whatever message was replied to.
 SESSION_TAG_RE = re.compile(r"\[([A-Za-z0-9_-]+)\]")
 
+# ask_options.sh stashes the AskUserQuestion payload here so a reply like
+# "1:2,3" can be turned back into the option labels Claude actually expects.
+
+# A pick looks like 1:2 or 1.2, with commas for multi-select: 1:2,3
+PICK_RE = re.compile(r"(\d+)\s*[:.]\s*((?:\d+\s*,\s*)*\d+)")
+
 STATE_FILE = Path(
     os.environ.get("AGENT_BRIDGE_STATE", "~/.agent-bridge/state.json")
 ).expanduser()
 STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+QUESTION_DIR = STATE_FILE.parent / "questions"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("agent-bridge")
@@ -73,7 +81,25 @@ def tmux_sessions() -> list[str]:
         return []
 
 
-def type_into_session(target: str, text: str) -> tuple[bool, str]:
+# Claude Code's modal selectors (plan approval, trust prompt, question cards)
+# all end with a footer like "Enter to select . Esc to cancel". They ignore
+# pasted text and treat Enter as "choose the highlighted option" -- so replying
+# with prose while one is open silently picks the default. On a plan approval
+# that auto-approves the agent. Detect them and dismiss first.
+SELECTOR_RE = re.compile(r"Enter to (select|confirm)|Esc to cancel", re.I)
+
+
+def pane_has_selector(target: str) -> bool:
+    """True if a modal selector is currently on screen in this pane."""
+    out = subprocess.run(["tmux", "capture-pane", "-t", target, "-p"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        return False
+    tail = "\n".join(out.stdout.strip().splitlines()[-15:])
+    return bool(SELECTOR_RE.search(tail))
+
+
+def type_into_session(target: str, text: str, dismiss_first: bool = False) -> tuple[bool, str]:
     """Type `text` into the pane, then press Enter.
 
     Routed through a paste buffer loaded from stdin rather than the more
@@ -84,6 +110,20 @@ def type_into_session(target: str, text: str) -> tuple[bool, str]:
     instead of the word, and a trailing ";" is read as a command separator
     (tmux#1849). Buffer contents loaded from stdin never touch that parser.
     """
+    # A trailing newline in the buffer submits on its own; the explicit Enter
+    # below would then be a stray keypress that can select an option on whatever
+    # prompt appears next. Seen in testing: it silently answered a question.
+    text = text.rstrip("\r\n")
+
+    if dismiss_first:
+        # A question card is open. Esc closes it and returns the pane to the
+        # normal prompt, so the answer can be typed as an ordinary message.
+        # Chosen over driving the card's checkboxes with arrow keys because the
+        # widget's layout changes between versions; the prompt does not.
+        subprocess.run(["tmux", "send-keys", "-t", target, "Escape"],
+                       capture_output=True, text=True)
+        time.sleep(0.4)
+
     if text:
         load = subprocess.run(
             ["tmux", "load-buffer", "-b", BUFFER, "-"],
@@ -107,6 +147,65 @@ def type_into_session(target: str, text: str) -> tuple[bool, str]:
     if enter.returncode != 0:
         return False, enter.stderr.strip() or "send-keys Enter failed"
     return True, ""
+
+
+def load_pending_question(session):
+    """The AskUserQuestion payload waiting on this session, or None."""
+    path = QUESTION_DIR / f"{session}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def clear_pending_question(session):
+    try:
+        (QUESTION_DIR / f"{session}.json").unlink()
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("could not clear pending question for %s: %s", session, e)
+
+
+def compose_answer(questions, reply):
+    """Turn "1:2,3 | 2:1 -- also keep it dark" into prose Claude understands.
+
+    Returns None when the reply contains no picks at all, in which case the
+    reply is sent through untouched as ordinary free text.
+    """
+    body, _, note = reply.partition("--")
+    picks = PICK_RE.findall(body)
+    if not picks:
+        return None
+
+    lines = []
+    for q_raw, opts_raw in picks:
+        qi = int(q_raw) - 1
+        if not (0 <= qi < len(questions)):
+            continue
+        question = questions[qi]
+        options = question.get("options") or []
+        labels = []
+        for o_raw in opts_raw.split(","):
+            oi = int(o_raw.strip()) - 1
+            if 0 <= oi < len(options):
+                labels.append(options[oi].get("label", ""))
+        if not labels:
+            continue
+        header = question.get("header") or question.get("question", f"Q{qi + 1}")
+        lines.append(f"{header}: {', '.join(labels)}")
+
+    if not lines:
+        return None
+    note = note.strip()
+    if note:
+        lines.append(f"Also: {note}")
+    # Deliberately ONE line. A newline pasted into Claude Code's input box
+    # arrives as a carriage return, so multi-line answers come out corrupted
+    # ("...pageAlso: keep it minimal"). Verified against a real transcript.
+    return "; ".join(lines)
 
 
 async def session_from_reply(message, sessions):
@@ -204,12 +303,30 @@ async def on_message(message: discord.Message):
         )
         return
 
-    ok, err = type_into_session(target, text)
+    # If this session is sitting on an AskUserQuestion, translate picks like
+    # "1:2,3" into the option labels Claude is expecting. A reply with no picks
+    # in it passes through untouched as ordinary free text.
+    note = ""
+    pending = load_pending_question(target)
+    if pending:
+        composed = compose_answer(pending.get("questions") or [], text)
+        if composed:
+            text = composed
+            note = " (answered the pending question)"
+        clear_pending_question(target)
+
+    # Dismiss any open selector before typing, or Enter would pick its default.
+    selector_open = pane_has_selector(target)
+    if selector_open and not pending:
+        note = " (a prompt was open, so it was dismissed rather than answered)"
+
+    ok, err = type_into_session(target, text,
+                                dismiss_first=bool(pending) or selector_open)
     if not ok:
         log.error("send to %s failed: %s", target, err)
         await message.channel.send(f"⚠️ failed to send to [{target}]: {err}")
         return
-    await message.channel.send(f"↩️ sent to [{target}]")
+    await message.channel.send(f"↩️ sent to [{target}]{note}")
 
 
 def main():

@@ -39,9 +39,12 @@ if os.path.exists(settings_path):
         sys.exit(f"install.sh: {settings_path} is not valid JSON ({e}); fix it and re-run")
 
 
+OUR_SCRIPTS = ("notify.sh", "ask_options.sh")
+
+
 def ours(entry):
     """An agent-bridge hook entry, from this install or an earlier one."""
-    return any("notify.sh" in (h.get("command") or "")
+    return any(any(name in (h.get("command") or "") for name in OUR_SCRIPTS)
                for h in entry.get("hooks", []))
 
 

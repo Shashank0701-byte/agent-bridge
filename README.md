@@ -48,7 +48,10 @@ agent-bridge/
 ├── config/
 │   └── claude-settings.snippet.json  # merged into ~/.claude/settings.json
 ├── hooks/
-│   └── notify.sh                     # OUTBOUND: hook -> Discord DM
+│   ├── notify.sh                     # OUTBOUND: hook -> Discord DM
+│   ├── ask_options.sh                # OUTBOUND: multiple-choice questions -> Discord
+│   ├── ask_options.py                #   formats the card, stashes it for the bot
+│   └── lib/discord_send.py           #   shared DM sender (chunks past 2000 chars)
 ├── bot/
 │   └── bot.py                        # INBOUND: Discord DM -> tmux
 ├── poller/
@@ -232,6 +235,57 @@ ln -s /path/to/agent-bridge/scripts/start_session.sh ~/.local/bin/agent-session
    | plain text, no prefix | goes to whichever session pinged last |
 
    `!sessions` (or `[sessions]`) lists what's live.
+
+### Multiple-choice questions
+
+When Claude needs a decision it calls its `AskUserQuestion` tool, and a
+`PreToolUse` hook hands the bridge the whole thing -- every question, option
+label, description, and whether it's multi-select. So the choices arrive on your
+phone rather than only on screen:
+
+```
+🟡 [PromptWall] needs a decision (3 questions)
+
+1. Visual tone (pick one)
+   2.1 Dark, security/terminal-inspired — monospace accents, WAF/SOC feel
+   2.2 Clean SaaS, light — minimal, developer-tool feel
+   ...
+
+Reply with your picks, e.g. 1:1 | 2:1 | 3:1
+Add a note after -- to say anything else.
+```
+
+Reply `1:1,2 | 2:1 -- keep the logo left-aligned` and the bridge turns the
+numbers back into the option labels Claude expects, appending your note.
+Separators are lenient: `1:1 2:1 3:1`, `1.1`, and stray spaces all parse. A
+reply with no picks in it is passed through as ordinary free text.
+
+### Selectors are never silently confirmed
+
+Claude Code shows modal selectors for plan approval, folder trust, and question
+cards. They ignore pasted text and treat **Enter as "choose the highlighted
+option"**, so a prose reply sent while one is open used to select the default --
+on a plan approval that silently approved the agent and it started editing files.
+
+The bridge now checks the pane before typing. If a selector is open it sends
+`Esc` first, which dismisses it (i.e. declines) and then delivers your words as
+an ordinary message. It will never confirm something on your behalf, and the
+Discord confirmation tells you when a prompt was dismissed rather than answered.
+
+Detection keys off the selector footer (`Enter to select` / `Esc to cancel`),
+which is deliberately distinct from the busy footer (`esc to interrupt`) so a
+reply sent mid-task is not mistaken for one.
+
+Two implementation notes, both learned the hard way:
+
+- **The hook does not block.** `PreToolUse` runs *before* the tool, so blocking
+  would stop the question card rendering and lock you out of answering at your
+  own keyboard. It notifies and exits immediately.
+- **Answers are sent as one line, after `Esc`.** Esc dismisses the card and
+  returns the pane to the normal prompt, which is immune to the card's layout
+  changing between versions. A newline pasted into Claude Code's input box
+  arrives as a carriage return and corrupts the text, so composed answers are
+  joined with `; ` instead.
 
    If you name a session that isn't running, the bridge says so and sends
    **nothing**. It deliberately does not fall back to the last-pinged session,
