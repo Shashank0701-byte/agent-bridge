@@ -1,0 +1,14 @@
+# The bridge's Python is three short scripts, not a library. Keep the rules to
+# things that would actually break it -- real errors, unused names, bad imports
+# -- rather than a house style nobody agreed to.
+line-length = 100
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4"]
+ignore = [
+  "E501",   # long lines are usually the explanatory comments, which earn it
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402"]   # conftest puts the bridge's directories on sys.path first

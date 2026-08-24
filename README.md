@@ -78,6 +78,11 @@ agent-bridge/
 │   └── bot.py                        # INBOUND: Discord DM -> tmux
 ├── poller/
 │   └── watch_pane.sh                 # fallback for agents with no hook system
+├── tests/                            # pytest: pure logic + a real tmux session
+├── ci/
+│   ├── guard.sh                      # secrets, line endings, exec bits
+│   ├── bootstrap_smoke.sh            # runs bootstrap.sh in a clean container
+│   └── analyze_powershell.ps1        # parse check for the Windows installer
 └── scripts/
     ├── lib/session_name.sh           # shared: folder -> tmux session name
     ├── start_session.sh              # launch a session for a project directory
@@ -356,6 +361,39 @@ tmux new -d -s scratch
 # reply in the DM, then:
 tmux capture-pane -t scratch -p | tail -3                  # your text should be in the pane
 ```
+
+## Continuous integration
+
+`.gitlab-ci.yml` runs on every push. Every job declares `needs: []`, so they all
+start at once and the pipeline takes as long as its slowest job rather than the
+sum of them.
+
+| Job | What it protects |
+|---|---|
+| `guard` | `.env` never committed, no token anywhere in history, no CRLF in a `.sh`, every script committed executable |
+| `lint:shell` | shellcheck over all 13 shell scripts |
+| `lint:python` | ruff |
+| `lint:powershell` | `install.ps1` at least parses -- the only automated check the Windows path gets |
+| `test:unit` | reply parsing, pick-to-label translation, 2000-char chunking, and the `install.sh` hook merge against a settings file that already has hooks |
+| `test:tmux` | a real tmux session: replies starting with `-`, ending with `;`, or reading `Enter` must arrive byte for byte |
+| `smoke:bootstrap` | `bootstrap.sh` end to end on clean Ubuntu 22.04 and 24.04, twice, checking a login shell really resolves `claude` to the wrapper |
+
+`smoke:bootstrap` is the slow one, so it is gated: it runs on `main`, on merge
+requests that touch the install path, manually anywhere else, and on a weekly
+schedule that downloads the real Claude Code installer -- so upstream changing
+that installer shows up here instead of on a new user's first afternoon.
+
+Run any of it locally:
+
+```bash
+pip install -r requirements.txt pytest
+pytest                       # the tmux tests skip themselves if tmux is missing
+bash ci/guard.sh
+```
+
+**What CI does not cover.** `install.ps1` needs a Windows runner, and the
+modal-selector handling needs a live Claude Code UI. Both are still checked by
+hand, so a green pipeline is not a claim that the Windows installer works.
 
 ## Design decisions
 

@@ -1,0 +1,138 @@
+# agent-bridge CI
+#
+# Every job here declares `needs: []`, so the whole pipeline is a single fan-out
+# wave: nothing waits for a stage boundary it does not actually depend on. The
+# stages exist only to group the jobs in the pipeline view. Wall-clock time is
+# therefore the slowest job, not the sum of them.
+#
+# What this pipeline cannot reach, and never will: the Windows installer needs a
+# Windows runner, and the modal-selector behaviour needs a live Claude Code UI.
+# Both stay manual. A green pipeline is not a claim that install.ps1 works.
+
+stages:
+  - check
+  - verify
+
+default:
+  interruptible: true          # a new push cancels the pipeline it replaces
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  GIT_DEPTH: "20"
+
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    # Branch + MR pipelines for the same commit would otherwise both run.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH
+
+.python:
+  image: python:3.12-slim
+  needs: []
+  cache:
+    key:
+      files: [requirements.txt]
+    paths: [.cache/pip]
+  before_script:
+    - pip install -q -r requirements.txt pytest
+
+# --------------------------------------------------------------------- check
+
+guard:
+  stage: check
+  image:
+    name: alpine/git:latest
+    entrypoint: [""]
+  needs: []
+  variables:
+    GIT_DEPTH: "0"             # the secret scan walks the whole history
+  before_script:
+    - apk add --no-cache bash grep >/dev/null
+  script:
+    - bash ci/guard.sh
+
+lint:shell:
+  stage: check
+  image:
+    name: koalaman/shellcheck-alpine:stable
+    entrypoint: [""]
+  needs: []
+  script:
+    - shellcheck --version
+    # -x follows `source` into scripts/lib/session_name.sh.
+    - shellcheck -x -S warning $(find . -name '*.sh' -not -path './.git/*')
+
+lint:python:
+  extends: .python
+  stage: check
+  before_script:
+    - pip install -q ruff
+  script:
+    - ruff check .
+
+lint:powershell:
+  stage: check
+  image:
+    name: mcr.microsoft.com/powershell:lts-debian-12
+    entrypoint: [""]
+  needs: []
+  script:
+    # A parse check first: neither this pipeline nor a Linux developer can run
+    # install.ps1, so "does it even parse" is the only automated protection the
+    # Windows path gets before someone runs it on a real machine.
+    - pwsh -NoProfile -File ci/analyze_powershell.ps1
+
+# -------------------------------------------------------------------- verify
+
+test:unit:
+  extends: .python
+  stage: verify
+  script:
+    # test_tmux_integration.py skips itself here -- it has its own job below.
+    - pytest -q
+
+test:tmux:
+  extends: .python
+  stage: verify
+  variables:
+    LANG: C.UTF-8              # the pane round-trip includes non-ASCII text
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq tmux >/dev/null
+    - pip install -q -r requirements.txt pytest
+  script:
+    - tmux -V
+    - pytest -q tests/test_tmux_integration.py
+
+smoke:bootstrap:
+  stage: verify
+  image: $IMAGE
+  needs: []
+  parallel:
+    matrix:
+      - IMAGE: ["ubuntu:22.04", "ubuntu:24.04"]
+  script:
+    - bash ci/bootstrap_smoke.sh
+  # The slow one, so it is the only job that is gated rather than always run.
+  rules:
+    # The weekly schedule downloads the real Claude Code installer, so upstream
+    # changing it shows up here rather than on a new user's first afternoon.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      variables:
+        AB_SMOKE_REAL_CLAUDE: "1"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        compare_to: refs/heads/main
+        paths:
+          - scripts/**/*
+          - config/**/*
+          - ci/bootstrap_smoke.sh
+          - requirements.txt
+          - .gitlab-ci.yml
+    - when: manual                 # available on any branch, blocks nothing
+      allow_failure: true
