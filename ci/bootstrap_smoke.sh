@@ -32,7 +32,10 @@ head_ "Container prerequisites"
 # bootstrap.sh calls sudo, which a root container does not ship. Standing in a
 # shim is closer to a real machine than editing the script for CI would be.
 if ! command -v sudo >/dev/null; then
-  printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sudo
+  # Real sudo applies a leading NAME=VALUE as an assignment; a bare `exec "$@"`
+  # instead tries to run a program called DEBIAN_FRONTEND=noninteractive, so
+  # every apt call in bootstrap.sh failed. `env` handles the assignment.
+  printf '#!/bin/sh\nexec env "$@"\n' > /usr/local/bin/sudo
   chmod +x /usr/local/bin/sudo
   pass "installed a sudo shim (already root)"
 else
@@ -45,6 +48,9 @@ else
   # bootstrap.sh skips the download when claude is already present, so a stub
   # keeps the run offline and fast without branching the script under test.
   mkdir -p "$HOME/.local/bin"
+  # Real sudo applies a leading NAME=VALUE as an assignment; a bare `exec "$@"`
+  # instead tries to run a program called DEBIAN_FRONTEND=noninteractive, so
+  # every apt call in bootstrap.sh failed. `env` handles the assignment.
   printf '#!/bin/sh\necho "0.0.0-stub (Claude Code)"\n' > "$HOME/.local/bin/claude"
   chmod +x "$HOME/.local/bin/claude"
   pass "stubbed claude (set AB_SMOKE_REAL_CLAUDE=1 to use the real installer)"
