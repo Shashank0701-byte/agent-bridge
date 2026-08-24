@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared: derive a tmux session name from a directory path.
 #
 # Both start_session.sh and the `claude` wrapper need this to agree exactly --

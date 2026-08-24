@@ -2,7 +2,7 @@
 # Post-login end-to-end check: proves the Notification/Stop hooks reach Discord.
 # Run this after `claude auth login` (or /login inside a claude session).
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 export PATH="$HOME/.local/bin:$PATH"
 VENV="$HOME/.venvs/agent-bridge/bin/python"
 

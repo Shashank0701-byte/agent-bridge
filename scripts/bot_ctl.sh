@@ -20,7 +20,7 @@ case "${1:-status}" in
   supervise)
     echo "$$" > "$PIDFILE"
     trap 'rm -f "$PIDFILE"' EXIT
-    cd "$REPO"
+    cd "$REPO" || exit 1
     while true; do
       echo "[$(date '+%F %T')] starting bot" >> "$LOG"
       "$VENV" bot/bot.py >> "$LOG" 2>&1
