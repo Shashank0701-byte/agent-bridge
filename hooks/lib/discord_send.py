@@ -39,12 +39,14 @@ def chunk(text, limit=LIMIT):
     for line in text.split("\n"):
         if len(line) > limit:                      # pathological single line
             if cur:
-                out.append(cur); cur = ""
+                out.append(cur)
+                cur = ""
             for i in range(0, len(line), limit):
                 out.append(line[i:i + limit])
             continue
         if len(cur) + len(line) + 1 > limit:
-            out.append(cur); cur = line
+            out.append(cur)
+            cur = line
         else:
             cur = f"{cur}\n{line}" if cur else line
     if cur:

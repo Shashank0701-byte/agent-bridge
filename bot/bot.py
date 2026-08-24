@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -20,8 +21,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-ALLOWED_USER_ID = int(os.environ["DISCORD_USER_ID"])
+# Filled in by main() rather than read at import, so the pure helpers below
+# (compose_answer, the target patterns) can be imported and unit tested with
+# no token in the environment.
+BOT_TOKEN = ""
+ALLOWED_USER_ID = 0          # matches no Discord user, so an unstarted bot fails closed
 
 # "!" rather than "/": a leading slash triggers Discord's native slash-command
 # autocomplete, which pops up an unhelpful "no commands match" every time you
@@ -54,7 +58,6 @@ PICK_RE = re.compile(r"(\d+)\s*[:.]\s*((?:\d+\s*,\s*)*\d+)")
 STATE_FILE = Path(
     os.environ.get("AGENT_BRIDGE_STATE", "~/.agent-bridge/state.json")
 ).expanduser()
-STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 QUESTION_DIR = STATE_FILE.parent / "questions"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -330,6 +333,15 @@ async def on_message(message: discord.Message):
 
 
 def main():
+    global BOT_TOKEN, ALLOWED_USER_ID
+    try:
+        BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
+        ALLOWED_USER_ID = int(os.environ["DISCORD_USER_ID"])
+    except KeyError as e:
+        sys.exit(f"bot: {e.args[0]} is not set -- check your .env")
+    except ValueError:
+        sys.exit("bot: DISCORD_USER_ID must be a number")
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     client.run(BOT_TOKEN)
 
 
