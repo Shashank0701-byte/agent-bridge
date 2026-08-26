@@ -40,6 +40,32 @@ if [ "$KIND" = "done" ]; then
   TEXT="[$SESSION_NAME] Task finished."
 else
   TEXT="[$SESSION_NAME] Needs input: $MSG_TEXT"
+
+  # If a modal selector is on screen, put its choices in the DM. Without them
+  # the only thing you can do from your phone is dismiss the prompt, because
+  # you cannot see what you would be choosing between.
+  #
+  # The widget may not have rendered when the hook fires, so poll briefly. Every
+  # step is best-effort: a notification must still go out if any of this fails.
+  PANE=""
+  for _ in 1 2 3 4 5; do
+    PANE="$(tmux capture-pane -t "$SESSION_NAME" -p 2>/dev/null || true)"
+    case "$PANE" in
+      *"Enter to confirm"*|*"Enter to select"*|*"Esc to cancel"*) break ;;
+    esac
+    PANE=""
+    sleep 0.15
+  done
+  if [ -n "$PANE" ]; then
+    OPTS="$(printf '%s\n' "$PANE" | tail -n 15 \
+            | grep -E '^[[:space:]]*(❯[[:space:]]*)?[0-9]{1,2}\.[[:space:]]+\S' \
+            | sed 's/^[[:space:]]*//' | head -n 9 || true)"
+    if [ -n "$OPTS" ]; then
+      TEXT="$TEXT
+$OPTS
+Reply \`pick <n>\` to choose, or send text to dismiss it."
+    fi
+  fi
 fi
 
 # Remember last session that pinged (so a plain reply knows where to go).

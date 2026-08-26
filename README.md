@@ -286,7 +286,8 @@ ln -s /path/to/agent-bridge/scripts/start_session.sh ~/.local/bin/agent-session
    | `[myproject] your reply` (or `!myproject your reply`) | naming it explicitly; matching is case-insensitive |
    | plain text, no prefix | goes to whichever session pinged last |
 
-   `!sessions` (or `[sessions]`) lists what's live.
+   `!sessions` (or `[sessions]`) lists what's live. When a prompt is on screen,
+   `pick 2` chooses option 2 -- see below.
 
 ### Multiple-choice questions
 
@@ -315,14 +316,45 @@ reply with no picks in it is passed through as ordinary free text.
 ### Selectors are never silently confirmed
 
 Claude Code shows modal selectors for plan approval, folder trust, and question
-cards. They ignore pasted text and treat **Enter as "choose the highlighted
-option"**, so a prose reply sent while one is open used to select the default --
-on a plan approval that silently approved the agent and it started editing files.
+cards. A prose reply sent while one is open used to select the highlighted
+option -- on a plan approval that silently approved the agent and it started
+editing files.
 
-The bridge now checks the pane before typing. If a selector is open it sends
-`Esc` first, which dismisses it (i.e. declines) and then delivers your words as
-an ordinary message. It will never confirm something on your behalf, and the
-Discord confirmation tells you when a prompt was dismissed rather than answered.
+Measured against Claude Code 2.1.241, using the folder-trust prompt because its
+option 2 is "No, exit" and so reports its own outcome:
+
+| Input | What the widget does |
+|-------|----------------------|
+| `send-keys 2` | selects option 2 immediately -- no Enter needed |
+| `paste "2"` | also selects option 2 |
+| `paste "hello"` | **selects the highlighted option, with no Enter at all** |
+| `send-keys Down` | moves the marker, leaves the prompt open |
+| `send-keys Space` | ignored |
+| `send-keys Escape` | dismisses it (on the trust prompt, that exits Claude) |
+
+The third row is the dangerous one, and it is broader than "don't press Enter":
+**pasting ordinary prose is enough to approve a plan.** So the bridge sends
+`Esc` and then *verifies the widget is gone* before it types anything. If it is
+still there, nothing is sent and Discord tells you so -- refusing is always
+recoverable, typing into a live widget is not.
+
+Answering one is the first row: `pick 2` presses the digit `2`, which selects
+that option outright. No arrow keys, no Enter, no cursor position to get wrong.
+A bare `2` works too, once the options have been listed in the DM.
+
+```
+🟡 [portfolio] Needs input: Claude needs your permission to run ls
+❯ 1. Yes
+  2. Yes, and don't ask again
+  3. No, tell Claude what to do differently
+Reply `pick <n>` to choose, or send text to dismiss it.
+```
+
+Options outside 1-9 are refused rather than guessed at: the first digit of "12"
+would already have chosen something. A `pick` aimed at an `AskUserQuestion` card
+is refused too and points you at the `1:2` syntax, because a digit into a
+multi-select card has not been tested -- and guessing keystrokes is what caused
+the original bug.
 
 Detection keys off the selector footer (`Enter to select` / `Esc to cancel`),
 which is deliberately distinct from the busy footer (`esc to interrupt`) so a

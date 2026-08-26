@@ -55,6 +55,15 @@ SESSION_TAG_RE = re.compile(r"\[([A-Za-z0-9_-]+)\]")
 # A pick looks like 1:2 or 1.2, with commas for multi-select: 1:2,3
 PICK_RE = re.compile(r"(\d+)\s*[:.]\s*((?:\d+\s*,\s*)*\d+)")
 
+# Modal selectors render their choices as a numbered list, with the highlighted
+# one marked: "❯ 1. Yes, I trust this folder" / "  2. No, exit".
+OPTION_RE = re.compile(r"^\s*(?P<marker>[❯>])?\s*(?P<number>\d{1,2})\.\s+(?P<label>\S.*?)\s*$")
+
+# "pick 2", "!pick 2". A bare "2" also counts, but only while a prompt is
+# actually on screen -- see on_message.
+SELECT_CMD_RE = re.compile(r"^!?\s*pick\s+(\d{1,2})$", re.I)
+BARE_NUMBER_RE = re.compile(r"^(\d{1,2})$")
+
 STATE_FILE = Path(
     os.environ.get("AGENT_BRIDGE_STATE", "~/.agent-bridge/state.json")
 ).expanduser()
@@ -85,21 +94,112 @@ def tmux_sessions() -> list[str]:
 
 
 # Claude Code's modal selectors (plan approval, trust prompt, question cards)
-# all end with a footer like "Enter to select . Esc to cancel". They ignore
-# pasted text and treat Enter as "choose the highlighted option" -- so replying
-# with prose while one is open silently picks the default. On a plan approval
-# that auto-approves the agent. Detect them and dismiss first.
+# all end with a footer like "Enter to select . Esc to cancel".
+#
+# How they consume input, measured against Claude Code 2.1.241 using the folder
+# trust prompt, whose option 2 is "No, exit" and therefore reports its own
+# outcome. Re-check this if the mapping ever stops behaving:
+#
+#   send-keys "2"          selects option 2 immediately -- no Enter needed
+#   paste-buffer "2"       also selects option 2
+#   paste-buffer "hello"   selects the HIGHLIGHTED option, with no Enter at all
+#   send-keys Down         moves the marker, leaves the prompt open
+#   send-keys Space        ignored
+#   send-keys Escape       dismisses (on the trust prompt, that exits Claude)
+#
+# The third line is the dangerous one, and it is why nothing may be pasted into
+# a pane until the widget is verifiably gone: pasting ordinary prose is enough
+# to approve a plan. The first line is what makes choose_option simple -- one
+# keystroke, no cursor arithmetic to get wrong.
 SELECTOR_RE = re.compile(r"Enter to (select|confirm)|Esc to cancel", re.I)
+
+# Long enough for a slow render, short enough that a stuck prompt is reported
+# rather than waited on. The pane settles in under 50ms in practice.
+SETTLE_TIMEOUT = 2.0
+SETTLE_POLL = 0.05
+
+
+def capture_pane(target: str) -> str:
+    """What is on screen in this pane right now, or "" if it cannot be read."""
+    out = subprocess.run(["tmux", "capture-pane", "-t", target, "-p"],
+                         capture_output=True, text=True)
+    return out.stdout if out.returncode == 0 else ""
 
 
 def pane_has_selector(target: str) -> bool:
     """True if a modal selector is currently on screen in this pane."""
-    out = subprocess.run(["tmux", "capture-pane", "-t", target, "-p"],
-                         capture_output=True, text=True)
-    if out.returncode != 0:
-        return False
-    tail = "\n".join(out.stdout.strip().splitlines()[-15:])
+    tail = "\n".join(capture_pane(target).strip().splitlines()[-15:])
     return bool(SELECTOR_RE.search(tail))
+
+
+def pane_options(target: str) -> tuple[list[tuple[int, str]], int | None]:
+    """The numbered choices on screen, and which one is highlighted.
+
+    Returns ([], None) when no selector is open, so callers can treat "nothing
+    to choose from" and "cannot read the pane" the same way.
+    """
+    lines = capture_pane(target).strip().splitlines()
+    tail = lines[-15:]
+    if not SELECTOR_RE.search("\n".join(tail)):
+        return [], None
+
+    options, highlighted = [], None
+    for line in tail:
+        m = OPTION_RE.match(line)
+        if not m:
+            continue
+        number = int(m.group("number"))
+        options.append((number, m.group("label")))
+        if m.group("marker"):
+            highlighted = number
+    return options, highlighted
+
+
+def wait_for_selector_gone(target: str, timeout: float = SETTLE_TIMEOUT) -> bool:
+    """Poll until no selector is on screen. False means one is still there."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if not pane_has_selector(target):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(SETTLE_POLL)
+
+
+def choose_option(target: str, number: int) -> tuple[bool, str]:
+    """Choose a numbered option by pressing its digit.
+
+    Deliberately not arrow keys: a digit selects outright (see the table
+    above), so there is no cursor position to track and no Enter to send --
+    the two things that made the earlier auto-approval bug possible.
+    """
+    options, _ = pane_options(target)
+    if not options:
+        return False, "there is no prompt on screen to choose from"
+    if not 1 <= number <= 9:
+        # Two digits would be two keystrokes, and the first one would already
+        # have selected something. Refuse rather than guess.
+        return False, "only options 1-9 can be chosen this way"
+    label = next((text for num, text in options if num == number), None)
+    if label is None:
+        listing = ", ".join(f"{num}. {text}" for num, text in options)
+        return False, f"there is no option {number}. On screen: {listing}"
+
+    sent = subprocess.run(["tmux", "send-keys", "-t", target, str(number)],
+                          capture_output=True, text=True)
+    if sent.returncode != 0:
+        return False, sent.stderr.strip() or "send-keys failed"
+    if not wait_for_selector_gone(target):
+        return False, "the prompt is still on screen -- nothing was chosen"
+    return True, label
+
+
+def format_options(options: list[tuple[int, str]], highlighted: int | None) -> str:
+    """The on-screen choices, as a line that fits in a DM."""
+    parts = [f"{'**' if num == highlighted else ''}{num}. {text}"
+             f"{'**' if num == highlighted else ''}"
+             for num, text in options]
+    return " · ".join(parts)
 
 
 def type_into_session(target: str, text: str, dismiss_first: bool = False) -> tuple[bool, str]:
@@ -119,13 +219,20 @@ def type_into_session(target: str, text: str, dismiss_first: bool = False) -> tu
     text = text.rstrip("\r\n")
 
     if dismiss_first:
-        # A question card is open. Esc closes it and returns the pane to the
-        # normal prompt, so the answer can be typed as an ordinary message.
-        # Chosen over driving the card's checkboxes with arrow keys because the
-        # widget's layout changes between versions; the prompt does not.
+        # A prompt is open. Esc closes it and returns the pane to the normal
+        # input box, so the answer can be typed as an ordinary message. Chosen
+        # over driving the widget's checkboxes with arrow keys because the
+        # layout changes between versions; the input box does not.
         subprocess.run(["tmux", "send-keys", "-t", target, "Escape"],
                        capture_output=True, text=True)
-        time.sleep(0.4)
+        # Verified, not slept on. Pasting into a widget that is still up selects
+        # the highlighted option even without an Enter -- on a plan approval
+        # that approves it. Refusing to type is always recoverable; typing into
+        # a live widget is not.
+        if not wait_for_selector_gone(target):
+            return False, ("a prompt is still on screen and would have consumed "
+                           "this reply -- nothing was sent. Use `pick <n>`, or "
+                           "answer it in the terminal.")
 
     if text:
         load = subprocess.run(
@@ -306,11 +413,40 @@ async def on_message(message: discord.Message):
         )
         return
 
+    note = ""
+    pending = load_pending_question(target)
+
+    # "pick 2" -- or a bare "2" while a prompt is actually on screen, which has
+    # no other sensible reading once the options have been listed in the DM.
+    # An AskUserQuestion card is left to the "1:2,3" path below: a digit into a
+    # multi-select card has not been tested, and guessing is what this whole
+    # area is trying to stop.
+    chosen = None
+    explicit = SELECT_CMD_RE.match(text)
+    if explicit and pending:
+        await message.channel.send(
+            f"[{target}] is on a question card -- answer it with `1:2` "
+            f"(question 1, option 2) rather than `pick`."
+        )
+        return
+    if explicit:
+        chosen = int(explicit.group(1))
+    else:
+        bare = BARE_NUMBER_RE.match(text)
+        if bare and not pending and pane_has_selector(target):
+            chosen = int(bare.group(1))
+
+    if chosen is not None:
+        ok, detail = choose_option(target, chosen)
+        if ok:
+            await message.channel.send(f"✅ [{target}] chose **{chosen}. {detail}**")
+        else:
+            await message.channel.send(f"⚠️ [{target}] {detail}")
+        return
+
     # If this session is sitting on an AskUserQuestion, translate picks like
     # "1:2,3" into the option labels Claude is expecting. A reply with no picks
     # in it passes through untouched as ordinary free text.
-    note = ""
-    pending = load_pending_question(target)
     if pending:
         composed = compose_answer(pending.get("questions") or [], text)
         if composed:
@@ -318,10 +454,17 @@ async def on_message(message: discord.Message):
             note = " (answered the pending question)"
         clear_pending_question(target)
 
-    # Dismiss any open selector before typing, or Enter would pick its default.
+    # Dismiss any open selector before typing, or the paste would choose for you.
+    # Read the options first: after dismissing they are gone, and knowing what
+    # was on screen is what turns "it got dismissed" into something actionable.
     selector_open = pane_has_selector(target)
+    dismissed_options = ""
     if selector_open and not pending:
+        options, highlighted = pane_options(target)
         note = " (a prompt was open, so it was dismissed rather than answered)"
+        if options:
+            dismissed_options = ("\nIt was offering: " + format_options(options, highlighted)
+                                 + "\nNext time reply `pick <n>` to choose one.")
 
     ok, err = type_into_session(target, text,
                                 dismiss_first=bool(pending) or selector_open)
@@ -329,7 +472,7 @@ async def on_message(message: discord.Message):
         log.error("send to %s failed: %s", target, err)
         await message.channel.send(f"⚠️ failed to send to [{target}]: {err}")
         return
-    await message.channel.send(f"↩️ sent to [{target}]{note}")
+    await message.channel.send(f"↩️ sent to [{target}]{note}{dismissed_options}")
 
 
 def main():
