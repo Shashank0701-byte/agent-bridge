@@ -44,7 +44,8 @@ SECRET_RE='glpat-[A-Za-z0-9_-]{20}|sk-ant-[A-Za-z0-9_-]{24}|gh[pousr]_[A-Za-z0-9
 hits=0
 while read -r sha path; do
   case "$path" in ci/guard.sh) continue ;; esac
-  if git cat-file blob "$sha" 2>/dev/null | grep -qE "$SECRET_RE"; then
+  # grep -c rather than -q, for the SIGPIPE reason explained further down.
+  if [ "$(git cat-file blob "$sha" 2>/dev/null | grep -cE "$SECRET_RE" || true)" != "0" ]; then
     fail "possible credential in $path (blob $sha)"
     hits=$((hits + 1))
   fi
@@ -57,8 +58,16 @@ done < <(git rev-list --objects --all | awk 'NF==2')
 # exist. .gitattributes prevents this, but only for people whose git honours it.
 head_ "No CRLF in files that run under Linux"
 crlf=0
+# Built with printf rather than written as $'\r' inline: inside a command
+# substitution the ANSI-C form came through as an EMPTY pattern, which matches
+# every line and reports every file as broken.
+CR="$(printf '\r')"
 for f in $(git ls-files '*.sh' '*.py' '.env*'); do
-  if git show ":$f" | grep -qU $'\r'; then
+  # grep -c, not grep -q: -q stops at the first match and closes the pipe, git
+  # dies of SIGPIPE, and `set -o pipefail` then reports 141 for a pipeline that
+  # actually found something. That failure mode has already cost this repo an
+  # afternoon once, in bootstrap.sh.
+  if [ "$(git show ":$f" | grep -cU "$CR" || true)" != "0" ]; then
     fail "$f contains CR -- it will fail with 'bad interpreter: ...^M'"
     crlf=$((crlf + 1))
   fi
@@ -69,11 +78,17 @@ done
 # README's very first command is ./scripts/bootstrap.sh. If the file is
 # committed 644, a fresh clone answers "Permission denied" and the project is
 # broken before anyone reaches the interesting parts.
+#
+# Anything with a shebang, not just *.sh: scripts/setup_discord.py is meant to
+# be run directly too. A sourced library has no shebang and is exempt.
 head_ "Scripts a clone will execute are executable"
 modes=0
 while read -r mode _ _ path; do
-  case "$path" in *.sh) ;; *) continue ;; esac
-  git show ":$path" | head -1 | grep -q '^#!' || continue   # sourced libs are exempt
+  # sed -n 1p rather than head -1, for the SIGPIPE reason above.
+  case "$(git show ":$path" 2>/dev/null | sed -n '1p')" in
+    '#!'*) ;;
+    *) continue ;;
+  esac
   if [ "$mode" != "100755" ]; then
     fail "$path has a shebang but is committed $mode -- git update-index --chmod=+x '$path'"
     modes=$((modes + 1))
