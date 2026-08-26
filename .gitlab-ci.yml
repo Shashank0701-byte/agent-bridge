@@ -94,7 +94,14 @@ test:unit:
   stage: verify
   script:
     # test_tmux_integration.py skips itself here -- it has its own job below.
-    - pytest -q
+    # --durations surfaces a test that is slow only on a runner, which is the
+    # kind you otherwise never find; the JUnit report puts per-test timings and
+    # failures in the merge request instead of buried in a job log.
+    - pytest -q --durations=15 --junitxml=junit-unit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: junit-unit.xml
 
 test:tmux:
   extends: .python
@@ -106,7 +113,11 @@ test:tmux:
     - pip install -q -r requirements.txt pytest
   script:
     - tmux -V
-    - pytest -q tests/test_tmux_integration.py
+    - pytest -q --durations=15 --junitxml=junit-tmux.xml tests/test_tmux_integration.py
+  artifacts:
+    when: always
+    reports:
+      junit: junit-tmux.xml
 
 smoke:bootstrap:
   stage: verify

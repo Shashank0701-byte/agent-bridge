@@ -36,9 +36,17 @@ git clone <this repo>; cd agent-bridge
 ./scripts/bootstrap.sh            # macOS / Linux / an existing WSL distro
 ```
 
-Then three things the script can't do for you: create a Discord bot (below),
-`claude auth login`, and fill in `.env`. Re-run the script afterwards and it
-starts the bot.
+The script then offers to walk you through creating the Discord bot. It checks
+each value as you type it and sends a real test DM, so it either finishes with a
+working bridge or tells you exactly which portal step was missed. The one thing
+left for you is `claude auth login`.
+
+To run that part on its own, or to work out why a working setup stopped:
+
+```bash
+scripts/setup_discord.py            # guided setup, verifies as it goes
+scripts/setup_discord.py --check    # test the credentials already in .env
+```
 
 ## Requirements
 
@@ -89,6 +97,7 @@ agent-bridge/
     ├── claude-wrapper.sh             # template for the transparent `claude` shim
     ├── install_wrapper.sh            # installs that shim (fully automatic mode)
     ├── bot_ctl.sh                    # start/stop/status/logs for the bot
+    ├── setup_discord.py              # guided Discord setup (--check to re-test)
     ├── install.sh                    # one-time setup: wires the hooks
     ├── install_autostart.ps1         # Windows: run the bot at logon
     └── final_test.sh                 # post-login end-to-end check
@@ -141,7 +150,7 @@ Widen or narrow the `matcher` in
 ## Setup
 
 ```bash
-cp .env.example .env      # fill in DISCORD_BOT_TOKEN and DISCORD_USER_ID
+scripts/setup_discord.py  # guided: asks for the two values and verifies both
 
 # Ubuntu 24.04+ and Debian 12+ enforce PEP 668, so a system-wide `pip install`
 # is refused with "externally-managed-environment". Use a venv.
@@ -204,9 +213,25 @@ The wrapper starts the bot if it isn't running, puts the session in tmux named
 after the folder, then runs the real claude. Re-running in the same folder
 reattaches rather than making a second session.
 
+**It also picks up where that folder left off.** The wrapper passes
+`--continue`, so `claude` in a project rejoins that project's last conversation
+instead of starting an empty one. This is the difference that matters after a
+reboot: tmux's `-A` only rejoins a session that still *exists*, and the whole
+point of the bridge is walking away from a session and coming back hours later.
+`--continue` is scoped to the current directory, so it can never pull in another
+project's conversation, and in a folder with no history it just starts fresh.
+
+```bash
+AGENT_BRIDGE_RESUME=0 claude      # deliberately start a new conversation
+```
+
+If you pass a conversation flag yourself -- `-c`, `-r/--resume`, `--from-pr`,
+`--cloud`, `--bg` -- the wrapper adds nothing, on the grounds that you have
+already said what you want.
+
 It stays out of the way when wrapping would be wrong -- `claude -p ...`, piped
-or non-TTY invocations, and anything already inside tmux all `exec` straight
-through to the real binary. `AGENT_BRIDGE_WRAP=0 claude` skips it for one run.
+or non-TTY invocations all `exec` straight through to the real binary.
+`AGENT_BRIDGE_WRAP=0 claude` skips it entirely for one run.
 
 The wrapper installs to `~/.agent-bridge/bin/claude`, deliberately *not* over
 `~/.local/bin/claude`, so Claude Code's auto-updater keeps managing its own

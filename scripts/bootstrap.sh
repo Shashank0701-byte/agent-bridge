@@ -102,6 +102,29 @@ PY
   ok "normalised CRLF line endings in .env"
 fi
 
+# Still on the placeholders? Walk through the Discord setup now rather than
+# ending with a to-do list. setup_discord.py checks each value as it is entered
+# and sends a real test DM, so this either finishes with a working bridge or
+# says exactly which portal step was missed.
+#
+# Only with a terminal and outside CI: the bootstrap smoke test must never block
+# on a prompt.
+if grep -q 'your-bot-token\|your_numeric' "$REPO/.env" 2>/dev/null \
+   && [ -t 0 ] && [ -z "${CI:-}" ]; then
+  printf '\n'
+  read -r -p "    Set up the Discord bot now? [Y/n] " REPLY_SETUP
+  case "$REPLY_SETUP" in
+    [Nn]*) skip "skipped -- run scripts/setup_discord.py when you are ready" ;;
+    *)
+      if python3 "$REPO/scripts/setup_discord.py"; then
+        ok "Discord credentials verified"
+      else
+        bad "Discord setup did not finish -- re-run scripts/setup_discord.py"
+      fi
+      ;;
+  esac
+fi
+
 # ------------------------------------------------------------------ hooks ---
 step "Claude Code hooks"
 bash "$REPO/scripts/install.sh" >/dev/null 2>&1 \

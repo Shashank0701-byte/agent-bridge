@@ -8,5 +8,5 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-for d in (ROOT / "bot", ROOT / "hooks", ROOT / "hooks" / "lib"):
+for d in (ROOT / "bot", ROOT / "hooks", ROOT / "hooks" / "lib", ROOT / "scripts"):
     sys.path.insert(0, str(d))
