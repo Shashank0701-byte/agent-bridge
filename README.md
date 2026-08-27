@@ -177,6 +177,20 @@ Then start the bot, and have it come back on its own after a reboot:
 ./scripts/bot_ctl.sh stop
 ```
 
+**Exactly one supervisor runs, whatever starts it.** That matters because two
+things here both call `start`: the `claude` wrapper does it on every invocation,
+and the Windows logon task does it at boot. A liveness check alone is not enough
+-- both can pass it in the same instant and each spawn a supervisor. Two bots on
+one token then receive every DM and both type your reply into tmux: a doubled
+message, or on a prompt a digit that chooses and a second digit that lands
+wherever the UI went next.
+
+The supervisor takes an atomic lock (`mkdir`, not `flock`, which macOS does not
+ship) and holds it for its lifetime; a second one exits immediately. A lock left
+behind by a `kill -9` or a reboot is reclaimed only once its owner is confirmed
+dead, so a stale lock can never wedge the bridge and a live one can never be
+stolen.
+
 On Windows/WSL, register the logon task so it survives a reboot. Run this from
 PowerShell, in the repo directory (no admin needed):
 
