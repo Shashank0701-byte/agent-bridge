@@ -25,6 +25,27 @@ Claude Code, Codex, or anything else you run in a terminal.
                           agent resumes as if you typed it
 ```
 
+## What it looks like
+
+Claude hits a decision it cannot make alone. The question, every option, and
+its description arrive as a DM -- not a "something needs you" nudge you have to
+go and decode.
+
+<img src="docs/screenshots/question-card.jpeg" width="380" alt="A Discord DM reading '[PromptWall] needs a decision (3 questions)', followed by numbered questions with lettered options and descriptions">
+
+You answer with the codes it printed. `1:1 2:1 3:1` picks the first option of
+each; add a note after `--` and that goes through too. The bridge translates
+your picks back into the option labels Claude is waiting for, then confirms what
+it did.
+
+<img src="docs/screenshots/answering-from-your-phone.jpeg" width="380" alt="The same conversation scrolled down: the user replies '1:1 2:1 3:1' and the bot answers 'sent to [PromptWall] (answered the pending question)'">
+
+Several projects at once each get their own tmux session, and each message is
+tagged with the one it came from. Reply to a message, or name the session, and
+it lands in the right agent -- never a different one.
+
+<img src="docs/screenshots/several-projects-at-once.jpeg" width="520" alt="Two sessions, PromptWall and CodePulse, both asking for permission; the user answers each by name and the bot confirms 'sent to [PromptWall]' and 'sent to [CodePulse]' separately">
+
 ## Quick start
 
 **macOS, Linux, or a WSL distro you already have:**

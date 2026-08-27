@@ -5,3 +5,6 @@ __pycache__/
 .ruff_cache/
 .cache/
 junit-*.xml
+
+# Raw screenshot dumps live here; the copies the README uses are in docs/
+photos/

@@ -4,3 +4,8 @@
 *.py   text eol=lf
 .env*  text eol=lf
 *.yml  text eol=lf
+
+# Screenshots: never touch these, and never try to normalise their line endings.
+*.jpeg binary
+*.jpg  binary
+*.png  binary
