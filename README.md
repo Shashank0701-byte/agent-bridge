@@ -27,13 +27,24 @@ Claude Code, Codex, or anything else you run in a terminal.
 
 ## Quick start
 
-```powershell
-git clone <this repo>; cd agent-bridge
-.\install.ps1                     # Windows: installs WSL2 + Ubuntu, then everything else
-```
+**macOS, Linux, or a WSL distro you already have:**
 
 ```bash
-./scripts/bootstrap.sh            # macOS / Linux / an existing WSL distro
+curl -fsSL https://gitlab.com/shashankchakraborty712005/agent-bridge/-/raw/main/scripts/get.sh | sh
+```
+
+That clones the repo to `~/agent-bridge` and runs `bootstrap.sh`. Both are safe
+to re-run; the second time it updates in place. If you would rather read it
+first -- and piping anything into a shell deserves that -- it is
+[scripts/get.sh](scripts/get.sh), and `git clone` then `./scripts/bootstrap.sh`
+does exactly the same thing.
+
+**Windows without WSL** starts a step earlier, because it has to install WSL2
+first:
+
+```powershell
+git clone <this repo>; cd agent-bridge
+.\install.ps1                     # installs WSL2 + Ubuntu, then everything else
 ```
 
 The script then offers to walk you through creating the Discord bot. It checks
@@ -90,6 +101,7 @@ agent-bridge/
 ├── ci/
 │   ├── guard.sh                      # secrets, line endings, exec bits
 │   ├── bootstrap_smoke.sh            # runs bootstrap.sh in a clean container
+│   ├── install_smoke.sh              # runs the one-liner in a bare container
 │   └── analyze_powershell.ps1        # parse check for the Windows installer
 └── scripts/
     ├── lib/session_name.sh           # shared: folder -> tmux session name
@@ -97,6 +109,7 @@ agent-bridge/
     ├── claude-wrapper.sh             # template for the transparent `claude` shim
     ├── install_wrapper.sh            # installs that shim (fully automatic mode)
     ├── bot_ctl.sh                    # start/stop/status/logs for the bot
+    ├── get.sh                        # the one-command install
     ├── setup_discord.py              # guided Discord setup (--check to re-test)
     ├── install.sh                    # one-time setup: wires the hooks
     ├── install_autostart.ps1         # Windows: run the bot at logon
@@ -448,6 +461,7 @@ sum of them.
 | `test:unit` | reply parsing, pick-to-label translation, 2000-char chunking, and the `install.sh` hook merge against a settings file that already has hooks |
 | `test:tmux` | a real tmux session: replies starting with `-`, ending with `;`, or reading `Enter` must arrive byte for byte |
 | `smoke:bootstrap` | `bootstrap.sh` end to end on clean Ubuntu 22.04 and 24.04, twice, checking a login shell really resolves `claude` to the wrapper |
+| `smoke:install` | the one-liner above, from a bare container: install git, clone the commit under test from the real remote, run it twice, and refuse to clobber a directory it did not create |
 
 `smoke:bootstrap` is the slow one, so it is gated: it runs on `main`, on merge
 requests that touch the install path, manually anywhere else, and on a weekly
