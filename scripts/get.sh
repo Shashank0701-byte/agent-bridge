@@ -54,8 +54,14 @@ main() {
   # Piped into sh, stdin is the script itself rather than the keyboard, so
   # bootstrap.sh would silently skip the guided Discord setup. Hand it the
   # terminal back where there is one.
+  #
+  # Opening /dev/tty is the test, not `[ -r /dev/tty ]`. The latter calls
+  # access(), which answers a question about permissions -- and it says yes on
+  # a process with no controlling terminal, where the open then fails with
+  # ENXIO. That is every container, cron job and `ssh host '... | sh'`, and it
+  # would take the whole install down with "cannot open /dev/tty".
   say "handing over to bootstrap.sh"
-  if [ ! -t 0 ] && [ -r /dev/tty ]; then
+  if [ ! -t 0 ] && (exec 3</dev/tty) 2>/dev/null; then
     bash "$DIR/scripts/bootstrap.sh" "$@" < /dev/tty
   else
     bash "$DIR/scripts/bootstrap.sh" "$@"
