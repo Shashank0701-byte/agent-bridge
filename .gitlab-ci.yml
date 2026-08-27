@@ -147,3 +147,38 @@ smoke:bootstrap:
           - .gitlab-ci.yml
     - when: manual                 # available on any branch, blocks nothing
       allow_failure: true
+
+smoke:install:
+  stage: verify
+  image: $IMAGE
+  needs: []
+  parallel:
+    matrix:
+      - IMAGE: ["ubuntu:22.04", "ubuntu:24.04"]
+  variables:
+    # Clone the commit under test rather than whatever main happens to be, so
+    # this proves the install path in *this* change.
+    AGENT_BRIDGE_REF: $CI_COMMIT_SHA
+    AGENT_BRIDGE_DIR: /tmp/agent-bridge-install
+  script:
+    - bash ci/install_smoke.sh
+  rules:
+    # On the default branch the commit is published, so the README's one-liner
+    # can be fetched and compared against what is in the repo -- that is what
+    # catches the file being renamed out from under the documented URL.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      variables:
+        AB_CHECK_PUBLIC_URL: "1"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        AB_CHECK_PUBLIC_URL: "1"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        compare_to: refs/heads/main
+        paths:
+          - scripts/**/*
+          - ci/install_smoke.sh
+          - requirements.txt
+          - .gitlab-ci.yml
+    - when: manual
+      allow_failure: true
