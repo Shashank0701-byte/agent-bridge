@@ -84,6 +84,9 @@ done
 head_ "Scripts a clone will execute are executable"
 modes=0
 while read -r mode _ _ path; do
+  # Images cannot carry a shebang, and reading one into a shell variable makes
+  # bash complain about the null bytes in its header.
+  case "$path" in *.jpeg|*.jpg|*.png|*.gif|*.ico|*.pdf) continue ;; esac
   # sed -n 1p rather than head -1, for the SIGPIPE reason above.
   case "$(git show ":$path" 2>/dev/null | sed -n '1p')" in
     '#!'*) ;;
