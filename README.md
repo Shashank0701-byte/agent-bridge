@@ -60,12 +60,14 @@ first -- and piping anything into a shell deserves that -- it is
 [scripts/get.sh](scripts/get.sh), and `git clone` then `./scripts/bootstrap.sh`
 does exactly the same thing.
 
-**Windows without WSL** starts a step earlier, because it has to install WSL2
-first:
+**Windows** has two options, because half the bridge works natively and half
+does not -- see [Windows without WSL](#windows-without-wsl) for why.
 
 ```powershell
 git clone <this repo>; cd agent-bridge
-.\install.ps1                     # installs WSL2 + Ubuntu, then everything else
+
+.\scripts\install_windows.ps1     # notifications only, no WSL at all
+.\install.ps1                     # the whole thing: installs WSL2 + Ubuntu
 ```
 
 The script then offers to walk you through creating the Discord bot. It checks
@@ -109,10 +111,11 @@ agent-bridge/
 ├── requirements.txt
 ├── config/
 │   └── claude-settings.snippet.json  # merged into ~/.claude/settings.json
-├── hooks/
-│   ├── notify.sh                     # OUTBOUND: hook -> Discord DM
-│   ├── ask_options.sh                # OUTBOUND: multiple-choice questions -> Discord
-│   ├── ask_options.py                #   formats the card, stashes it for the bot
+├── hooks/                            # OUTBOUND, and portable: these run on Windows too
+│   ├── notify.py                     # hook -> Discord DM
+│   ├── ask_options.py                # multiple-choice questions -> Discord
+│   ├── notify.sh, ask_options.sh     #   thin shims, for settings.json written by older installs
+│   ├── lib/bridge.py                 #   .env, session name, state file, pane options
 │   └── lib/discord_send.py           #   shared DM sender (chunks past 2000 chars)
 ├── bot/
 │   └── bot.py                        # INBOUND: Discord DM -> tmux
@@ -133,6 +136,7 @@ agent-bridge/
     ├── get.sh                        # the one-command install
     ├── setup_discord.py              # guided Discord setup (--check to re-test)
     ├── install.sh                    # one-time setup: wires the hooks
+    ├── install_windows.ps1           # Windows without WSL: notifications only
     ├── install_autostart.ps1         # Windows: run the bot at logon
     └── final_test.sh                 # post-login end-to-end check
 ```
@@ -478,7 +482,7 @@ sum of them.
 | `guard` | `.env` never committed, no token anywhere in history, no CRLF in a `.sh`, every script committed executable |
 | `lint:shell` | shellcheck over all 13 shell scripts |
 | `lint:python` | ruff |
-| `lint:powershell` | `install.ps1` at least parses -- the only automated check the Windows path gets |
+| `lint:powershell` | the `.ps1` files at least parse -- the only automated check the Windows path gets |
 | `test:unit` | reply parsing, pick-to-label translation, 2000-char chunking, and the `install.sh` hook merge against a settings file that already has hooks |
 | `test:tmux` | a real tmux session: replies starting with `-`, ending with `;`, or reading `Enter` must arrive byte for byte |
 | `smoke:bootstrap` | `bootstrap.sh` end to end on clean Ubuntu 22.04 and 24.04, twice, checking a login shell really resolves `claude` to the wrapper |
@@ -500,6 +504,44 @@ bash ci/guard.sh
 **What CI does not cover.** `install.ps1` needs a Windows runner, and the
 modal-selector handling needs a live Claude Code UI. Both are still checked by
 hand, so a green pipeline is not a claim that the Windows installer works.
+
+## Windows without WSL
+
+`claude.exe` runs natively on Windows, and so does half of this project.
+
+```powershell
+.\scripts\install_windows.ps1     # -Uninstall to remove
+```
+
+That wires the outbound hooks into native Claude Code. Permission prompts,
+question cards and task-finished all reach your phone from a `claude` session
+started in PowerShell, with no WSL anywhere. **Replying from Discord still needs
+the WSL setup.**
+
+**Why the split.** The inbound leg types your reply into a *live* interactive
+session, which means owning the terminal input of a running process. That is
+what tmux does, and Windows has no equivalent. The alternatives are worse than
+they look:
+
+- *SendKeys / UI Automation* needs the window focused, breaks the moment you
+  touch the mouse, and can type into the wrong window. For something that types
+  into an agent with file-write powers, that is the failure this project has
+  worked hardest to make impossible.
+- *A ConPTY host* -- spawning `claude` inside a pseudo-console the bridge owns
+  -- does work, but a session has to survive closing the window, so it needs a
+  persistent background host with attach/detach, resize handling and crash
+  recovery. That is writing a small tmux, in the most dangerous part of the
+  system.
+
+So the honest answer is half the product without WSL, clearly labelled, rather
+than a reply path that types into whatever window happens to be in front.
+
+**One trap worth knowing** if you ever wire this up by hand: `bash` on a normal
+Windows PATH is `C:\WINDOWS\system32ash.exe`, the WSL shim. A hook pointed at
+a `.sh` file would run *inside WSL*, in a different operating system from the
+agent that fired it and with a different view of the filesystem. It would not
+fail cleanly -- it would half-work. That is why the hooks are Python and why
+`install_windows.ps1` writes commands that call `python` directly.
 
 ## Design decisions
 
