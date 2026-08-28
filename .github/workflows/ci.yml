@@ -1,0 +1,90 @@
+# The same checks as .gitlab-ci.yml, so the mirror is a maintained repository
+# rather than a dump. GitLab stays the source of truth and runs the container
+# install smokes; this exists so the green tick is visible where people look.
+#
+# No job depends on another, so they all start at once and the wall clock is the
+# slowest job rather than the sum -- the same shape as the GitLab pipeline.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the secret scan walks the whole history
+      - run: bash ci/guard.sh
+
+  lint-shell:
+    name: lint:shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure shellcheck
+        run: shellcheck --version || (sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck)
+      - name: shellcheck
+        # -x follows `source` into scripts/lib/session_name.sh.
+        run: shellcheck -x -S warning $(find . -name '*.sh' -not -path './.git/*')
+
+  lint-python:
+    name: lint:python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet ruff
+      - run: ruff check .
+
+  lint-powershell:
+    name: lint:powershell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # pwsh is preinstalled on the Ubuntu runners, so the Windows installer
+      # gets its parse check without needing a Windows runner.
+      - run: pwsh -NoProfile -File ci/analyze_powershell.ps1
+
+  test-unit:
+    name: test:unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --quiet -r requirements.txt pytest
+      # test_tmux_integration.py skips itself here -- it has its own job.
+      - run: pytest -q --durations=15
+
+  test-tmux:
+    name: test:tmux
+    runs-on: ubuntu-latest
+    env:
+      LANG: C.UTF-8              # the pane round-trip includes non-ASCII text
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --quiet -r requirements.txt pytest
+      - run: tmux -V
+      - run: pytest -q --durations=15 tests/test_tmux_integration.py
