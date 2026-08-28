@@ -1,5 +1,9 @@
 # agent-bridge
 
+[![CI](https://github.com/Shashank0701-byte/agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Shashank0701-byte/agent-bridge/actions/workflows/ci.yml)
+[![Install](https://github.com/Shashank0701-byte/agent-bridge/actions/workflows/install.yml/badge.svg)](https://github.com/Shashank0701-byte/agent-bridge/actions/workflows/install.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Get a Discord DM when your coding agent (Claude Code, Codex, etc.) is blocked
 waiting on you, reply from your phone, and have that reply typed straight back
 into the session -- no need to be at your keyboard.
@@ -64,11 +68,22 @@ first -- and piping anything into a shell deserves that -- it is
 [scripts/get.sh](scripts/get.sh), and `git clone` then `./scripts/bootstrap.sh`
 does exactly the same thing.
 
+The project lives on **GitLab** and is mirrored to **GitHub**; clone whichever
+you prefer, they hold the same commits.
+
+```bash
+git clone https://gitlab.com/shashankchakraborty712005/agent-bridge.git
+git clone https://github.com/Shashank0701-byte/agent-bridge.git
+```
+
+`get.sh` clones from GitLab by default because that is where the pipeline runs.
+`AGENT_BRIDGE_REPO=https://github.com/Shashank0701-byte/agent-bridge.git` points it at the mirror instead.
+
 **Windows** has two options, because half the bridge works natively and half
 does not -- see [Windows without WSL](#windows-without-wsl) for why.
 
 ```powershell
-git clone https://gitlab.com/shashankchakraborty712005/agent-bridge.git
+git clone https://gitlab.com/shashankchakraborty712005/agent-bridge.git      # or the GitHub mirror, above
 cd agent-bridge
 
 .\scripts\install_windows.ps1     # notifications only, no WSL at all
@@ -478,9 +493,9 @@ tmux capture-pane -t scratch -p | tail -3                  # your text should be
 
 ## Continuous integration
 
-`.gitlab-ci.yml` runs on every push. Every job declares `needs: []`, so they all
-start at once and the pipeline takes as long as its slowest job rather than the
-sum of them.
+`.gitlab-ci.yml` runs on every push, and `.github/workflows/` runs the same
+checks on the mirror. No job depends on another, so they all start at once and
+the pipeline takes as long as its slowest job rather than the sum of them.
 
 | Job | What it protects |
 |---|---|

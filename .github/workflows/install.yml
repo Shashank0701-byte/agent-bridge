@@ -1,0 +1,72 @@
+# The slow half: install the project the way a stranger does, in a bare
+# container. Split out from ci.yml so it can be gated on paths -- a README
+# change should not spend four minutes rebuilding Ubuntu.
+#
+# The weekly run is the point of this file as much as the per-push run: the
+# bootstrap downloads Claude Code from the internet, so it can break with no
+# commit from anyone here.
+name: Install
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "config/**"
+      - "ci/bootstrap_smoke.sh"
+      - "ci/install_smoke.sh"
+      - "requirements.txt"
+      - ".github/workflows/install.yml"
+  schedule:
+    - cron: "0 6 * * 1"          # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    name: smoke:bootstrap (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04"]
+    env:
+      # Only the scheduled run downloads the real Claude Code installer, so
+      # upstream changing it shows up here rather than on a new user's first
+      # afternoon. Every other run stubs it and stays offline.
+      AB_SMOKE_REAL_CLAUDE: ${{ github.event_name == 'schedule' && '1' || '0' }}
+    steps:
+      # A bare ubuntu image has no git, and actions/checkout wants it.
+      - name: Install git
+        run: apt-get update -qq && apt-get install -y -qq git ca-certificates
+      - uses: actions/checkout@v4
+      - run: bash ci/bootstrap_smoke.sh
+
+  install:
+    name: smoke:install (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04"]
+    env:
+      # Clone from wherever this is running, at the commit under test, so the
+      # run proves the install path in *this* change rather than in whatever
+      # the other remote happens to hold.
+      AGENT_BRIDGE_REPO: ${{ github.server_url }}/${{ github.repository }}.git
+      AGENT_BRIDGE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+      AGENT_BRIDGE_DIR: /tmp/agent-bridge-install
+    steps:
+      - name: Install git
+        run: apt-get update -qq && apt-get install -y -qq git ca-certificates
+      - uses: actions/checkout@v4
+      - run: bash ci/install_smoke.sh
