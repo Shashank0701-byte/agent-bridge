@@ -4,6 +4,10 @@ Get a Discord DM when your coding agent (Claude Code, Codex, etc.) is blocked
 waiting on you, reply from your phone, and have that reply typed straight back
 into the session -- no need to be at your keyboard.
 
+> It types what you send into a live terminal on your machine, so one Discord
+> account is all that stands between a stranger and your shell. Two minutes on
+> [Security](#security) before you install is time well spent.
+
 ## How it works
 
 The whole thing hinges on one idea: run the agent inside **tmux**, then treat
@@ -64,7 +68,8 @@ does exactly the same thing.
 does not -- see [Windows without WSL](#windows-without-wsl) for why.
 
 ```powershell
-git clone <this repo>; cd agent-bridge
+git clone https://gitlab.com/shashankchakraborty712005/agent-bridge.git
+cd agent-bridge
 
 .\scripts\install_windows.ps1     # notifications only, no WSL at all
 .\install.ps1                     # the whole thing: installs WSL2 + Ubuntu
@@ -543,6 +548,54 @@ agent that fired it and with a different view of the filesystem. It would not
 fail cleanly -- it would half-work. That is why the hooks are Python and why
 `install_windows.ps1` writes commands that call `python` directly.
 
+## Security
+
+This types text you send from Discord into a live terminal on your machine, so
+it is worth being exact about what that does and does not mean.
+
+**Only one account can drive it.** Every DM's author ID is compared against
+`DISCORD_USER_ID` and anything else is dropped and logged. There is no group
+mode, no second user, no override. An unstarted bot has `ALLOWED_USER_ID = 0`,
+which matches no Discord user -- it fails closed rather than open.
+
+**Your Discord account is the key.** Anyone who can send DMs as you can type
+into your agent, and an agent can be asked to run commands -- it will, without
+asking, if you have auto-approve on. Treat that as equivalent to shell access on
+the machine. If you would not leave that terminal unlocked in a cafe, put 2FA on
+the Discord account.
+
+**The bot token is not the key.** Someone who steals it can read the DM history
+with the bot and post messages *as* the bot, but cannot make the bridge type
+anything: injection needs a message whose author ID is yours, and the token does
+not grant that. Rotate it anyway if it leaks -- that history contains your
+notifications and your replies.
+
+**If the agent has exited, the pane is a shell.** Whatever you send then runs as
+a shell command. That is inherent to driving a terminal rather than an API, not
+a bug, and it is the main reason the allowlist has no exceptions.
+
+**What crosses the network.** Your code is not uploaded anywhere. What does
+leave the machine is the text of the notification and the question card -- which
+routinely quotes your code, file names and design decisions -- travelling to
+Discord's servers and sitting in a DM history. If that is not acceptable for the
+work you do, this is not the tool for you, and no amount of configuration
+changes that.
+
+**What the bridge refuses to do**, all of it learned from something going wrong:
+
+- A reply naming a session that is not live is **refused**, never redirected to
+  another one. Typing into the wrong agent is worse than making you retype.
+- Nothing is pasted into a pane while a modal prompt is still up -- pasting is
+  enough to select the highlighted option, which once approved a plan by itself.
+  If the prompt will not close, the reply is not sent and you are told.
+- `pick` outside 1-9 is refused rather than guessed at, because the first digit
+  of "12" would already have chosen something.
+- Exactly one bot process runs at a time, so a reply cannot be typed twice.
+
+**Where the token lives.** `.env`, which is gitignored. `ci/guard.sh` fails the
+build if `.env` is ever committed, or if a token-shaped string appears anywhere
+in the repository's history -- including in a commit that later deleted it.
+
 ## Design decisions
 
 - **tmux as the universal interface.** Every coding-agent CLI is just a
@@ -592,3 +645,7 @@ fail cleanly -- it would half-work. That is why the hooks are Python and why
   you send is executed as a shell command.** That's inherent to the approach,
   not a bug -- but it's why the allowlist matters and why the bot token
   belongs in `.env` and nowhere else.
+
+## License
+
+MIT -- see [LICENSE](LICENSE). Use it, fork it, ship it.
