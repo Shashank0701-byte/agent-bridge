@@ -175,3 +175,37 @@ def test_choosing_with_no_prompt_on_screen_is_refused(pane):
 def test_an_ordinary_reply_is_unaffected_by_all_of_this(pane):
     """The safety checks must not get in the way of the common case."""
     assert send(pane, "just a normal reply") == ["just a normal reply"]
+
+
+# --------------------------------------------------------- the exited-agent gap
+
+def test_a_shell_pane_is_recognised_as_a_shell(pane):
+    """The reply fixture runs bash, which is exactly the state this guards:
+    an agent that exited leaving its shell behind."""
+    session, _ = pane
+    assert bot.pane_command(session) in bot.SHELL_COMMANDS
+
+
+def test_a_pane_busy_with_a_command_is_not_mistaken_for_a_shell(tmp_path):
+    """tmux reports the pane's foreground command, so a pane running something
+    reports that -- which is why this is a denylist of shells rather than an
+    allowlist of known agents."""
+    session = "abcmd-" + uuid4().hex[:8]
+    subprocess.run(["tmux", "new-session", "-d", "-s", session, "sleep", "30"],
+                   check=True, capture_output=True)
+    try:
+        time.sleep(0.7)
+        assert bot.pane_command(session) == "sleep"
+        assert bot.pane_command(session) not in bot.SHELL_COMMANDS
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)
+
+
+def test_a_session_that_does_not_exist_reads_as_empty(pane):
+    assert bot.pane_command("no-such-session-" + uuid4().hex[:6]) == ""
+
+
+def test_an_empty_reading_is_not_treated_as_a_shell():
+    """Better to send than to refuse on a reading we could not take -- the
+    selector check is the one that must fail closed, not this one."""
+    assert "" not in bot.SHELL_COMMANDS

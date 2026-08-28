@@ -64,6 +64,31 @@ OPTION_RE = re.compile(r"^\s*(?P<marker>[❯>])?\s*(?P<number>\d{1,2})\.\s+(?P<l
 SELECT_CMD_RE = re.compile(r"^!?\s*pick\s+(\d{1,2})$", re.I)
 BARE_NUMBER_RE = re.compile(r"^(\d{1,2})$")
 
+# "!run <command>": type this even though the pane is at a shell.
+FORCE_RE = re.compile(r"^!\s*run\s+(.+)$", re.I | re.DOTALL)
+
+# If the agent has exited, the pane is a shell and anything typed is run as a
+# command. Which command is in the pane is the only reliable way to tell.
+#
+# A denylist of shells, not an allowlist of agents, and the difference matters:
+# tmux reports the pane's *foreground* command, so a pane busy running `npm` or
+# `sleep` reports that rather than the agent -- an allowlist would refuse those.
+# The bridge is also meant to work with any CLI agent, and those cannot be
+# enumerated. Shells can.
+SHELL_COMMANDS = frozenset({
+    "bash", "sh", "zsh", "fish", "dash", "ash", "ksh", "mksh", "tcsh", "csh",
+    "pwsh", "powershell", "cmd", "nu", "xonsh", "elvish",
+})
+
+
+def pane_command(target: str) -> str:
+    """The command running in the pane right now, or "" if it cannot be read."""
+    out = subprocess.run(
+        ["tmux", "display-message", "-p", "-t", target, "#{pane_current_command}"],
+        capture_output=True, text=True,
+    )
+    return out.stdout.strip() if out.returncode == 0 else ""
+
 STATE_FILE = Path(
     os.environ.get("AGENT_BRIDGE_STATE", "~/.agent-bridge/state.json")
 ).expanduser()
@@ -377,6 +402,7 @@ async def on_message(message: discord.Message):
 
     # Explicit targeting: "!name your reply" or "[name] your reply".
     target = None
+    forced = False
     for pattern in TARGET_PATTERNS:
         m = pattern.match(text)
         if not m:
@@ -385,6 +411,12 @@ async def on_message(message: discord.Message):
         if candidate.lower() == "sessions":
             await message.channel.send(f"Live sessions: {', '.join(sessions) or 'none'}")
             return
+        if candidate.lower() == "run":
+            # "!run <command>" -- deliberately send this to a pane even if what
+            # is sitting there is a shell. Restarting an agent that died while
+            # you were out is the reason this exists.
+            forced, text = True, rest
+            break
         # Case-insensitive: phone keyboards capitalise the first letter.
         target = next((s for s in sessions if s.lower() == candidate.lower()), None)
         if target is None:
@@ -412,6 +444,25 @@ async def on_message(message: discord.Message):
             f"Reply to one of my messages, or use `[session-name] your reply`."
         )
         return
+
+    # "[api] !run <command>" -- the same escape hatch, after an explicit target.
+    m = FORCE_RE.match(text)
+    if m:
+        forced, text = True, m.group(1).strip()
+
+    # Refuse to type into a pane whose agent has exited. Without this, a reply
+    # meant for a prompt is handed to whatever shell is sitting there and run as
+    # a command: "yes" is harmless, "remove the temp files" is not.
+    if not forced:
+        running = pane_command(target)
+        if running in SHELL_COMMANDS:
+            await message.channel.send(
+                f"⚠️ [{target}] is at a `{running}` prompt -- the agent is not "
+                f"running, so this would have been executed as a shell command. "
+                f"Nothing was sent.\n"
+                f"To do it anyway: `!run {text[:60]}`"
+            )
+            return
 
     note = ""
     pending = load_pending_question(target)
