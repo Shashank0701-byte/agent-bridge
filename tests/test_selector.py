@@ -95,3 +95,29 @@ def test_the_options_line_marks_the_highlighted_one():
 def test_the_options_line_survives_nothing_being_highlighted():
     out = format_options([(1, "Yes"), (2, "No")], None)
     assert "1. Yes" in out and "2. No" in out and "**" not in out
+
+
+# ------------------------------------------------- forcing past the shell guard
+
+@pytest.mark.parametrize("text,command", [
+    ("!run claude --continue", "claude --continue"),
+    ("!run  claude", "claude"),
+    ("! run npm test", "npm test"),
+    ("!RUN claude", "claude"),
+])
+def test_the_force_prefix_is_recognised(text, command):
+    from bot import FORCE_RE
+    m = FORCE_RE.match(text)
+    assert m and m.group(1).strip() == command
+
+
+@pytest.mark.parametrize("text", ["run claude", "!runclaude", "!run", "rerun it"])
+def test_something_that_is_not_the_force_prefix_is_left_alone(text):
+    from bot import FORCE_RE
+    assert FORCE_RE.match(text) is None
+
+
+def test_a_multiline_forced_command_keeps_its_body():
+    from bot import FORCE_RE
+    m = FORCE_RE.match("!run claude\nsecond line")
+    assert m and m.group(1) == "claude\nsecond line"

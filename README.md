@@ -359,7 +359,9 @@ ln -s /path/to/agent-bridge/scripts/start_session.sh ~/.local/bin/agent-session
    | plain text, no prefix | goes to whichever session pinged last |
 
    `!sessions` (or `[sessions]`) lists what's live. When a prompt is on screen,
-   `pick 2` chooses option 2 -- see below.
+   `pick 2` chooses option 2 -- see below. If the agent has exited and the pane
+   is back at a shell, replies are refused; `!run <command>` sends anyway, so
+   you can restart it from your phone.
 
 ### Multiple-choice questions
 
@@ -585,9 +587,18 @@ anything: injection needs a message whose author ID is yours, and the token does
 not grant that. Rotate it anyway if it leaks -- that history contains your
 notifications and your replies.
 
-**If the agent has exited, the pane is a shell.** Whatever you send then runs as
-a shell command. That is inherent to driving a terminal rather than an API, not
-a bug, and it is the main reason the allowlist has no exceptions.
+**If the agent has exited, the pane is a shell** -- and anything typed into it
+runs as a command. The bridge checks what a pane is actually running before
+typing and refuses when that is a shell, so a reply meant for a prompt is not
+handed to `bash` instead. `"yes"` would have been harmless; `"remove the temp
+files"` would not.
+
+That check is a denylist of shells rather than an allowlist of agents, on
+purpose. tmux reports the pane's *foreground* command, so a pane busy running
+`npm` reports `npm` -- an allowlist would refuse perfectly good replies -- and
+the bridge is meant to work with any CLI agent, which cannot be enumerated.
+Shells can. `!run <command>` sends anyway, which is how you restart an agent
+that died while you were out.
 
 **What crosses the network.** Your code is not uploaded anywhere. What does
 leave the machine is the text of the notification and the question card -- which
@@ -656,10 +667,10 @@ in the repository's history -- including in a commit that later deleted it.
 - Notifications are truncated to Discord's 2000-character message limit.
 - Single-user only by design (one allowlisted user ID). Extending to a team
   would need per-user session ownership, which this doesn't attempt.
-- **If the agent has exited and the pane is sitting at a bare shell, whatever
-  you send is executed as a shell command.** That's inherent to the approach,
-  not a bug -- but it's why the allowlist matters and why the bot token
-  belongs in `.env` and nowhere else.
+- The bridge reads which command a pane is running to decide whether it is safe
+  to type into, and tmux reports the *foreground* command. A pane whose agent
+  has spawned an interactive shell of its own therefore reads as a shell, and
+  replies to it need `!run`.
 
 ## License
 
