@@ -10,8 +10,9 @@ cursor_hook.py directly, never a .sh file: on Windows, bash is the WSL shim.
 """
 import json
 import os
+import re
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 REPO = Path(__file__).resolve().parent.parent
 MARKER = "cursor_hook.py"
@@ -23,7 +24,10 @@ def quote_part(part):
 
 
 def hook_command(python, repo, event):
-    script = str(Path(repo) / "hooks" / "cursor_hook.py")
+    if "\\" in repo or re.match(r"^[A-Za-z]:", repo):
+        script = str(PureWindowsPath(repo) / "hooks" / "cursor_hook.py")
+    else:
+        script = str(Path(repo) / "hooks" / "cursor_hook.py")
     arg = "stop" if event == "stop" else "shell"
     return " ".join(quote_part(p) for p in (python, script, arg))
 
