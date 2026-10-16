@@ -54,12 +54,23 @@ def chunk(text, limit=LIMIT):
     return out or [""]
 
 
-def send_dm(text):
+def message_payloads(text, components=None):
+    """One payload per chunk. Components ride on the last one, so a split card
+    still ends with its buttons instead of attaching them to a middle piece.
+    """
+    payloads = [{"content": part} for part in chunk(text)]
+    if components:
+        payloads[-1]["components"] = components
+    return payloads
+
+
+def send_dm(text, components=None):
     token = os.environ["DISCORD_BOT_TOKEN"]
     user_id = str(os.environ["DISCORD_USER_ID"])
     channel = _post(f"{API}/users/@me/channels", {"recipient_id": user_id}, token)
-    for part in chunk(text):
-        _post(f"{API}/channels/{channel['id']}/messages", {"content": part}, token)
+    url = f"{API}/channels/{channel['id']}/messages"
+    for payload in message_payloads(text, components):
+        _post(url, payload, token)
 
 
 def main():

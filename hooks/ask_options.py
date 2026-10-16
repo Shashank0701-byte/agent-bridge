@@ -20,8 +20,51 @@ sys.path.insert(0, str(HOOKS_DIR / "lib"))
 import bridge  # noqa: E402
 import discord_send  # noqa: E402
 
+# Discord: 5 buttons on a row, 80 characters on a label, 100 on a custom_id.
+# A tap has to answer the whole card, so buttons exist only for one
+# single-select question. Multi-select and multi-question cards stay text.
+MAX_BUTTONS = 5
+LABEL_LIMIT = 80
+ID_LIMIT = 100
 
-def build_message(session, questions):
+
+def button_custom_id(session, question, option):
+    """Id the bot parses back into a session and a 1-based pick."""
+    return f"ab:q:{session}:{question}:{option}"
+
+
+def question_components(session, questions):
+    """Action row for a one-question single-select card, or None.
+
+    None means "send the text card only". A card we cannot represent as one
+    tap must not grow a button that would answer half of it.
+    """
+    if len(questions) != 1 or questions[0].get("multiSelect"):
+        return None
+    options = questions[0].get("options") or []
+    if not 1 <= len(options) <= MAX_BUTTONS:
+        return None
+
+    buttons = []
+    for oi, opt in enumerate(options, 1):
+        label = (opt.get("label") or "").strip()
+        if not label:
+            return None
+        custom_id = button_custom_id(session, 1, oi)
+        if len(custom_id) > ID_LIMIT:
+            return None
+        if len(label) > LABEL_LIMIT:
+            label = label[:LABEL_LIMIT - 1] + "…"
+        buttons.append({
+            "type": 2,          # button
+            "style": 1,         # primary
+            "label": label,
+            "custom_id": custom_id,
+        })
+    return [{"type": 1, "components": buttons}]
+
+
+def build_message(session, questions, buttons=False):
     lines = [f"\U0001f7e1 **[{session}]** needs a decision "
              f"({len(questions)} question{'s' if len(questions) != 1 else ''})", ""]
     for qi, q in enumerate(questions, 1):
@@ -34,11 +77,12 @@ def build_message(session, questions):
             desc = (opt.get("description") or "").strip()
             lines.append(f"  `{qi}.{oi}` **{label}**" + (f" — {desc}" if desc else ""))
         lines.append("")
-    lines += [
-        "Reply with your picks, e.g. `" +
-        " | ".join(f"{i}:1" for i in range(1, len(questions) + 1)) + "`",
-        "Add a note after `--` to say anything else, or just reply in plain words.",
-    ]
+    example = " | ".join(f"{i}:1" for i in range(1, len(questions) + 1))
+    if buttons:
+        lines.append(f"Tap a button, or reply with your picks, e.g. `{example}`")
+    else:
+        lines.append(f"Reply with your picks, e.g. `{example}`")
+    lines.append("Add a note after `--` to say anything else, or just reply in plain words.")
     return "\n".join(lines)
 
 
@@ -70,7 +114,11 @@ def main():
         encoding="utf-8")
 
     bridge.record_last_session(session)
-    discord_send.send_dm(build_message(session, questions))
+    components = question_components(session, questions)
+    discord_send.send_dm(
+        build_message(session, questions, buttons=bool(components)),
+        components,
+    )
     return 0
 
 

@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import discord
@@ -66,6 +67,9 @@ BARE_NUMBER_RE = re.compile(r"^(\d{1,2})$")
 
 # "!run <command>": type this even though the pane is at a shell.
 FORCE_RE = re.compile(r"^!\s*run\s+(.+)$", re.I | re.DOTALL)
+
+# Buttons on a question card. ab:q:<session>:<question>:<option>, 1-based.
+BUTTON_ID_RE = re.compile(r"^ab:q:([A-Za-z0-9_-]+):(\d{1,2}):(\d{1,2})$")
 
 # If the agent has exited, the pane is a shell and anything typed is run as a
 # command. Which command is in the pane is the only reliable way to tell.
@@ -304,6 +308,85 @@ def clear_pending_question(session):
         log.warning("could not clear pending question for %s: %s", session, e)
 
 
+def audit_path():
+    """Local JSONL of every injection attempt. Never leaves the machine."""
+    override = os.environ.get("AGENT_BRIDGE_AUDIT")
+    if override:
+        return Path(override).expanduser()
+    return STATE_FILE.parent / "audit.jsonl"
+
+
+def append_audit(record):
+    """Append one JSON object. A logging failure must not block the reply."""
+    try:
+        path = audit_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), **record}
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.warning("could not write audit log: %s", e)
+
+
+def parse_button_id(custom_id):
+    """(session, question, option) from a card button, or None."""
+    match = BUTTON_ID_RE.match(custom_id or "")
+    if not match:
+        return None
+    return match.group(1), int(match.group(2)), int(match.group(3))
+
+
+def decide_button(custom_id, sessions, pending, pane):
+    """What a question-card tap is allowed to do. None if it is not our button.
+
+    ok means the caller may type `text` into `session`. A refusal still names
+    the session and the text it would have typed, so the audit log can record
+    the attempt. Nothing here touches tmux.
+    """
+    parsed = parse_button_id(custom_id)
+    if parsed is None:
+        return None
+    name, qi, oi = parsed
+    session = next((s for s in sessions if s.lower() == name.lower()), None)
+    if session is None:
+        return {"ok": False, "session": name, "text": "", "detail": "no-session", "pane": pane}
+
+    questions = (pending or {}).get("questions") or []
+    if not questions:
+        return {"ok": False, "session": session, "text": "", "detail": "no-question", "pane": pane}
+    if 1 <= qi <= len(questions) and questions[qi - 1].get("multiSelect"):
+        return {"ok": False, "session": session, "text": "", "detail": "multi", "pane": pane}
+
+    text = compose_answer(questions, f"{qi}:{oi}")
+    if not text:
+        return {"ok": False, "session": session, "text": "", "detail": "bad-option", "pane": pane}
+    if pane in SHELL_COMMANDS:
+        return {"ok": False, "session": session, "text": text, "detail": "shell", "pane": pane}
+    return {"ok": True, "session": session, "text": text, "detail": "", "pane": pane}
+
+
+def button_refusal(decision, sessions):
+    """The DM to send when a tap must not be typed."""
+    session = decision["session"]
+    detail = decision["detail"]
+    if detail == "no-session":
+        live = ", ".join(sessions) or "none"
+        return f"No session named `{session}`. Live sessions: {live}.\nNothing was sent."
+    if detail == "shell":
+        preview = decision["text"][:60]
+        return (
+            f"⚠️ [{session}] is at a `{decision['pane']}` prompt -- the agent is not "
+            f"running, so this would have been executed as a shell command. "
+            f"Nothing was sent.\n"
+            f"To do it anyway: `!run {preview}`"
+        )
+    if detail == "multi":
+        return f"[{session}] is a multi-select card -- reply `1:1,2`. Nothing was sent."
+    if detail == "no-question":
+        return f"[{session}] has no question waiting. Nothing was sent."
+    return f"[{session}] that option is not on the card. Nothing was sent."
+
+
 def compose_answer(questions, reply):
     """Turn "1:2,3 | 2:1 -- also keep it dark" into prose Claude understands.
 
@@ -456,6 +539,10 @@ async def on_message(message: discord.Message):
     if not forced:
         running = pane_command(target)
         if running in SHELL_COMMANDS:
+            append_audit({
+                "session": target, "source": "dm", "action": "type", "text": text,
+                "pane_command": running, "forced": False, "ok": False, "detail": "shell",
+            })
             await message.channel.send(
                 f"⚠️ [{target}] is at a `{running}` prompt -- the agent is not "
                 f"running, so this would have been executed as a shell command. "
@@ -489,6 +576,10 @@ async def on_message(message: discord.Message):
 
     if chosen is not None:
         ok, detail = choose_option(target, chosen)
+        append_audit({
+            "session": target, "source": "dm", "action": "pick", "text": str(chosen),
+            "pane_command": pane_command(target), "forced": False, "ok": ok, "detail": detail,
+        })
         if ok:
             await message.channel.send(f"✅ [{target}] chose **{chosen}. {detail}**")
         else:
@@ -519,11 +610,88 @@ async def on_message(message: discord.Message):
 
     ok, err = type_into_session(target, text,
                                 dismiss_first=bool(pending) or selector_open)
+    append_audit({
+        "session": target, "source": "dm", "action": "type", "text": text,
+        "pane_command": pane_command(target), "forced": forced, "ok": ok, "detail": err,
+    })
     if not ok:
         log.error("send to %s failed: %s", target, err)
         await message.channel.send(f"⚠️ failed to send to [{target}]: {err}")
         return
     await message.channel.send(f"↩️ sent to [{target}]{note}{dismissed_options}")
+
+
+def frozen_view(message):
+    """The same buttons, disabled, so a second tap cannot inject again."""
+    view = discord.ui.View(timeout=None)
+    for row in message.components:
+        for child in getattr(row, "children", []):
+            if not getattr(child, "custom_id", None):
+                continue
+            view.add_item(discord.ui.Button(
+                label=(child.label or "option")[:80],
+                custom_id=child.custom_id,
+                style=child.style,
+                disabled=True,
+            ))
+    return view
+
+
+@client.event
+async def on_interaction(interaction: discord.Interaction):
+    """A tap on a question-card button. Same allowlist and typing path as a DM."""
+    if interaction.type != discord.InteractionType.component:
+        return
+    custom_id = (interaction.data or {}).get("custom_id") or ""
+    if parse_button_id(custom_id) is None:
+        return
+
+    user = interaction.user
+    if user is None or user.id != ALLOWED_USER_ID:
+        log.warning("Ignored button from unauthorized user %s", getattr(user, "id", None))
+        await interaction.response.send_message("Not allowed.")
+        return
+
+    await interaction.response.defer()
+    sessions = tmux_sessions()
+    name, _, _ = parse_button_id(custom_id)
+    session = next((s for s in sessions if s.lower() == name.lower()), None)
+    pane = pane_command(session) if session else ""
+    pending = load_pending_question(session) if session else None
+    decision = decide_button(custom_id, sessions, pending, pane)
+    if not decision["ok"]:
+        append_audit({
+            "session": decision["session"], "source": "button", "action": "type",
+            "text": decision["text"], "pane_command": decision["pane"], "forced": False,
+            "ok": False, "detail": decision["detail"], "discord_id": str(interaction.id),
+        })
+        await interaction.followup.send(button_refusal(decision, sessions))
+        return
+
+    # Clear before typing so a second tap, already in flight, finds nothing
+    # waiting and is refused. A failed type is recoverable from the keyboard.
+    clear_pending_question(decision["session"])
+    ok, err = type_into_session(decision["session"], decision["text"], dismiss_first=True)
+    append_audit({
+        "session": decision["session"], "source": "button", "action": "type",
+        "text": decision["text"], "pane_command": pane, "forced": False,
+        "ok": ok, "detail": err, "discord_id": str(interaction.id),
+    })
+    if not ok:
+        log.error("button send to %s failed: %s", decision["session"], err)
+        await interaction.followup.send(
+            f"⚠️ failed to send to [{decision['session']}]: {err}"
+        )
+        return
+
+    if interaction.message is not None:
+        try:
+            await interaction.message.edit(view=frozen_view(interaction.message))
+        except Exception as e:
+            log.warning("could not disable buttons: %s", e)
+    await interaction.followup.send(
+        f"↩️ sent to [{decision['session']}] (answered the pending question)"
+    )
 
 
 def main():
