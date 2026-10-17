@@ -22,24 +22,44 @@ from pathlib import Path
 _KEEP = set(string.ascii_letters + string.digits + "_-")
 
 
-def load_env(repo_dir):
-    """Read the repo's .env into os.environ without overwriting what is set.
+def config_home():
+    """Secrets and runtime state. A pip install has no repo directory to write."""
+    raw = os.environ.get("AGENT_BRIDGE_HOME", "~/.agent-bridge")
+    return Path(os.path.expanduser(raw))
 
-    Deliberately not python-dotenv: hooks must run with a bare interpreter.
-    """
-    env_file = Path(repo_dir) / ".env"
-    if not env_file.exists():
-        return
-    for raw in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip().lstrip("﻿")
+
+def _parse_env_file(path):
+    values = {}
+    for raw in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip().lstrip("\ufeff")
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         key, value = key.strip(), value.strip().strip("\r")
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
-        # A real environment variable wins, so a caller can override .env.
-        os.environ.setdefault(key, value)
+        values[key] = value
+    return values
+
+
+def load_env(repo_dir):
+    """Read .env into os.environ without overwriting what is already set.
+
+    ~/.agent-bridge/.env wins over a checkout's .env, and a real environment
+    variable wins over both. A clone used for development still works when the
+    home file is absent. Deliberately not python-dotenv: hooks must run with a
+    bare interpreter.
+    """
+    prior = set(os.environ)
+    merged = {}
+    home = config_home() / ".env"
+    repo = Path(repo_dir) / ".env"
+    for path in (repo, home):
+        if path.is_file():
+            merged.update(_parse_env_file(path))
+    for key, value in merged.items():
+        if key not in prior:
+            os.environ[key] = value
 
 
 def sanitise_session_name(name):

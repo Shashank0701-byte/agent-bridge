@@ -62,11 +62,18 @@ it lands in the right agent -- never a different one.
 curl -fsSL https://gitlab.com/shashankchakraborty712005/agent-bridge/-/raw/main/scripts/get.sh | sh
 ```
 
-That clones the repo to `~/agent-bridge` and runs `bootstrap.sh`. Both are safe
-to re-run; the second time it updates in place. If you would rather read it
-first -- and piping anything into a shell deserves that -- it is
-[scripts/get.sh](scripts/get.sh), and `git clone` then `./scripts/bootstrap.sh`
-does exactly the same thing.
+That installs the `agent-bridge` command with pipx (or uv, if pipx is not
+there) and runs `agent-bridge setup`. It does not clone the repo into your
+home directory. Re-running it upgrades the command and runs setup again.
+Secrets and the bot's state live in `~/.agent-bridge/`, not in the install.
+
+If you would rather read it first -- and piping anything into a shell deserves
+that -- it is [scripts/get.sh](scripts/get.sh). `pipx install
+"git+https://gitlab.com/shashankchakraborty712005/agent-bridge.git"` then
+`agent-bridge setup` is the same thing without the curl.
+
+To hack on it, clone and use the scripts directly. `./scripts/bootstrap.sh`
+from a checkout still does the setup:
 
 The project lives on **GitLab** and is mirrored to **GitHub**; clone whichever
 you prefer, they hold the same commits.
@@ -76,8 +83,9 @@ git clone https://gitlab.com/shashankchakraborty712005/agent-bridge.git
 git clone https://github.com/Shashank0701-byte/agent-bridge.git
 ```
 
-`get.sh` clones from GitLab by default because that is where the pipeline runs.
+`get.sh` installs from GitLab by default because that is where the pipeline runs.
 `AGENT_BRIDGE_REPO=https://github.com/Shashank0701-byte/agent-bridge.git` points it at the mirror instead.
+`AGENT_BRIDGE_REF` selects a branch, tag, or commit.
 
 **Windows** has two options, because half the bridge works natively and half
 does not -- see [Windows without WSL](#windows-without-wsl) for why.
@@ -89,6 +97,10 @@ cd agent-bridge
 .\scripts\install_windows.ps1     # notifications only, no WSL at all
 .\install.ps1                     # the whole thing: installs WSL2 + Ubuntu
 ```
+
+A native `pip install` of the package can also run `agent-bridge setup --cursor`
+for those same notifications. It cannot type a reply into a pane; that still
+needs tmux, which means WSL.
 
 The script then offers to walk you through creating the Discord bot. It checks
 each value as you type it and sends a real test DM, so it either finishes with a
@@ -229,6 +241,7 @@ replaces its own previous entries instead of stacking up duplicates.
 Then start the bot, and have it come back on its own after a reboot:
 
 ```bash
+agent-bridge bot start            # same commands, once the package is installed
 ./scripts/bot_ctl.sh start        # start now (supervised: restarts if it crashes)
 ./scripts/bot_ctl.sh status       # running? last few log lines?
 ./scripts/bot_ctl.sh logs         # tail the log

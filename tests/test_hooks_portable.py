@@ -23,10 +23,13 @@ ENV_TEXT = (
 
 
 @pytest.fixture
-def clean_env(monkeypatch):
+def clean_env(monkeypatch, tmp_path):
     for name in ("DISCORD_BOT_TOKEN", "DISCORD_USER_ID", "AGENT_BRIDGE_STATE",
                  "TMUX_SESSION_NAME", "AB_SESSION", "AB_STATE_DIR"):
         monkeypatch.delenv(name, raising=False)
+    # A developer machine may already have ~/.agent-bridge/.env. Tests that
+    # pass a repo dir must not silently pick that file up.
+    monkeypatch.setenv("AGENT_BRIDGE_HOME", str(tmp_path / "no-such-home"))
 
 
 # ------------------------------------------------------------------ reading .env
@@ -61,6 +64,26 @@ def test_a_real_environment_variable_wins_over_the_file(tmp_path, clean_env, mon
 
 def test_a_missing_env_file_is_not_an_error(tmp_path, clean_env):
     bridge.load_env(tmp_path)          # must not raise
+
+
+def test_the_home_file_wins_over_a_checkout(tmp_path, clean_env, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("AGENT_BRIDGE_HOME", str(home))
+    (tmp_path / ".env").write_text("DISCORD_BOT_TOKEN=from-repo\n")
+    (home / ".env").write_text("DISCORD_BOT_TOKEN=from-home\n")
+    bridge.load_env(tmp_path)
+    assert os.environ["DISCORD_BOT_TOKEN"] == "from-home"
+
+
+def test_a_real_environment_variable_wins_over_the_home_file(tmp_path, clean_env, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("AGENT_BRIDGE_HOME", str(home))
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "from-the-environment")
+    (home / ".env").write_text("DISCORD_BOT_TOKEN=from-home\n")
+    bridge.load_env(tmp_path)
+    assert os.environ["DISCORD_BOT_TOKEN"] == "from-the-environment"
 
 
 # --------------------------------------------------------------- session names

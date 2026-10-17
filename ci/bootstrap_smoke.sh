@@ -99,8 +99,15 @@ else
   fail "no ~/.claude/settings.json was written"
 fi
 
-[ -f "$REPO/.env" ] && pass ".env created from the example" || fail ".env was not created"
-grep -q 'your-bot-token' "$REPO/.env" 2>/dev/null \
+if [ -f "$REPO/.env" ]; then
+  ENV_FILE="$REPO/.env"
+elif [ -f "$HOME/.agent-bridge/.env" ]; then
+  ENV_FILE="$HOME/.agent-bridge/.env"
+else
+  ENV_FILE=""
+fi
+[ -n "$ENV_FILE" ] && pass ".env created from the example" || fail ".env was not created"
+grep -q 'your-bot-token' "$ENV_FILE" 2>/dev/null \
   && pass "bot correctly not started with placeholder credentials" \
   || fail ".env does not look like the untouched example"
 

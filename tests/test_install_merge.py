@@ -40,6 +40,7 @@ def home(tmp_path):
 def run_install(home):
     env = dict(os.environ, HOME=str(home))
     env.pop("USERPROFILE", None)
+    env.pop("AGENT_BRIDGE_PYTHON", None)
     r = subprocess.run(["bash", str(ROOT / "scripts" / "install.sh")],
                        capture_output=True, text=True, env=env, cwd=str(ROOT))
     assert r.returncode == 0, r.stderr

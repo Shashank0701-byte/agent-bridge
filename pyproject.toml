@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-bridge"
+version = "0.1.0"
+description = "Discord DMs for a coding agent that is blocked on you, typed back into the live session."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+dependencies = [
+    "discord.py>=2.7",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+agent-bridge = "agent_bridge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_bridge*"]
+
+[tool.setuptools.cmdclass]
+build_py = "build_bundle.BuildPy"

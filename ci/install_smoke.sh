@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 # Run the one-command install the way a new person runs it: a bare container,
-# nothing installed, clone from the real remote, straight into bootstrap.
+# nothing installed, then get.sh, which pipx-installs this checkout and runs
+# agent-bridge setup. It must not leave a git clone in $HOME.
 #
-# This is the closest thing to watching someone else try the project, and it is
-# what turns "the no-clone install path is untested" into a thing CI proves.
-#
-#   AGENT_BRIDGE_REF     commit to install (CI sets this to the one under test)
 #   AB_CHECK_PUBLIC_URL  also assert the URL in the README still resolves; only
 #                        meaningful once the commit is on the default branch
 set -uo pipefail
@@ -16,11 +13,13 @@ pass() { printf '  \033[32mok\033[0m    %s\n' "$*"; }
 head_() { printf '\n==> %s\n' "$*"; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="${AGENT_BRIDGE_DIR:-/tmp/agent-bridge-install}"
-export AGENT_BRIDGE_DIR="$TARGET"
+# Install this checkout, not whatever main happens to be on the remote.
+export AGENT_BRIDGE_REPO="$REPO"
+export PIPX_HOME="${PIPX_HOME:-/opt/pipx}"
+export PIPX_BIN_DIR="${PIPX_BIN_DIR:-/usr/local/bin}"
 
 if [ -z "${CI:-}" ] && [ "${AB_SMOKE_FORCE:-0}" != "1" ]; then
-  echo "install_smoke.sh clones into \$HOME and rewrites it; CI only." >&2
+  echo "install_smoke.sh installs into the home directory and rewrites it; CI only." >&2
   echo "In a container you really meant it: AB_SMOKE_FORCE=1 $0" >&2
   exit 2
 fi
@@ -28,8 +27,14 @@ fi
 head_ "A bare container has none of this"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq git curl ca-certificates >/dev/null 2>&1
-command -v git >/dev/null && pass "git installed" || fail "could not install git"
+apt-get install -y -qq git curl ca-certificates python3 python3-venv python3-pip pipx >/dev/null 2>&1
+if command -v pipx >/dev/null 2>&1 \
+   || python3 -m pip install --break-system-packages -q pipx \
+   || python3 -m pip install -q pipx; then
+  pass "pipx installed"
+else
+  fail "could not install pipx"
+fi
 
 if ! command -v sudo >/dev/null; then
   printf '#!/bin/sh\nexec env "$@"\n' > /usr/local/bin/sudo
@@ -42,7 +47,6 @@ chmod +x "$HOME/.local/bin/claude"
 pass "stubbed claude, so nothing is downloaded from claude.ai"
 
 head_ "Running scripts/get.sh"
-rm -rf "$TARGET"
 # --no-wrapper keeps the run from shadowing `claude` in the container; the
 # wrapper itself has its own coverage in smoke:bootstrap.
 if sh "$REPO/scripts/get.sh" --no-wrapper; then
@@ -52,22 +56,14 @@ else
 fi
 
 head_ "What that should have produced"
-[ -d "$TARGET/.git" ] && pass "cloned to $TARGET" || fail "no clone at $TARGET"
-
-if [ -n "${AGENT_BRIDGE_REF:-}" ] && [ -d "$TARGET/.git" ]; then
-  got="$(git -C "$TARGET" rev-parse HEAD 2>/dev/null)"
-  if [ "$got" = "$AGENT_BRIDGE_REF" ]; then
-    pass "checked out the requested commit"
-  else
-    fail "wanted $AGENT_BRIDGE_REF, got $got"
-  fi
-fi
+command -v agent-bridge >/dev/null && pass "agent-bridge is on PATH" || fail "no agent-bridge command"
+[ ! -d "$HOME/agent-bridge" ] && pass "did not clone into ~/agent-bridge" || fail "left a checkout in ~/agent-bridge"
 
 [ -x "$HOME/.venvs/agent-bridge/bin/python" ] \
   && pass "virtualenv built" || fail "no virtualenv"
 "$HOME/.venvs/agent-bridge/bin/python" -c 'import discord, dotenv' 2>/dev/null \
   && pass "dependencies importable" || fail "venv cannot import discord / dotenv"
-grep -q 'notify.sh' "$HOME/.claude/settings.json" 2>/dev/null \
+grep -qE 'notify\.(sh|py)' "$HOME/.claude/settings.json" 2>/dev/null \
   && pass "hooks wired" || fail "hooks were not wired"
 
 head_ "Running it a second time updates in place"
@@ -78,15 +74,15 @@ else
   tail -20 /tmp/second-install.log
 fi
 
-head_ "It refuses a directory it did not create"
+head_ "It does not create a checkout, even if told a directory"
 rm -rf /tmp/occupied && mkdir -p /tmp/occupied && touch /tmp/occupied/mine.txt
-if AGENT_BRIDGE_DIR=/tmp/occupied sh "$REPO/scripts/get.sh" >/tmp/occupied.log 2>&1; then
-  fail "clobbered a directory that was already there"
+if AGENT_BRIDGE_DIR=/tmp/occupied sh "$REPO/scripts/get.sh" --no-wrapper >/tmp/occupied.log 2>&1; then
+  pass "second-style run with a stray AGENT_BRIDGE_DIR still exited 0"
 else
-  grep -q "already exists" /tmp/occupied.log \
-    && pass "refused, and said why" || fail "refused, but not for the right reason"
+  fail "install failed when AGENT_BRIDGE_DIR pointed at an existing directory"
 fi
-[ -f /tmp/occupied/mine.txt ] && pass "left its contents alone" || fail "deleted someone's files"
+[ -f /tmp/occupied/mine.txt ] && pass "left that directory alone" || fail "deleted someone's files"
+[ ! -d /tmp/occupied/.git ] && pass "did not turn it into a clone" || fail "cloned into AGENT_BRIDGE_DIR"
 
 if [ "${AB_CHECK_PUBLIC_URL:-0}" = "1" ]; then
   head_ "The URL in the README still resolves"

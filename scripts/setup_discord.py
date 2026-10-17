@@ -22,7 +22,7 @@ from pathlib import Path
 
 API = "https://discord.com/api/v10"
 REPO = Path(__file__).resolve().parent.parent
-ENV_FILE = REPO / ".env"
+ENV_FILE = Path(os.environ.get("AGENT_BRIDGE_ENV_FILE", REPO / ".env")).expanduser()
 EXAMPLE_FILE = REPO / ".env.example"
 
 _COLOUR = sys.stdout.isatty() and os.environ.get("TERM") not in (None, "dumb")
