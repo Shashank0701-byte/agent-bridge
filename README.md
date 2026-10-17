@@ -327,7 +327,9 @@ reply goes there because the state file tracks whichever session pinged last.
 ```bash
 ./scripts/start_session.sh                      # session named after $PWD
 ./scripts/start_session.sh ~/code/api           # from anywhere
-./scripts/start_session.sh ~/code/api codex     # run codex instead of claude
+./scripts/start_session.sh ~/code/api cursor    # Cursor CLI (`agent`), pane watched for y/n
+./scripts/start_session.sh ~/code/api codex     # codex, pane watched for a prompt
+./scripts/start_session.sh ~/code/api gemini    # gemini, same idea
 SESSION_NAME=api-v2 ./scripts/start_session.sh ~/code/api   # override the name
 ```
 
@@ -339,6 +341,32 @@ Worth putting on your PATH so it's available from any directory:
 ```bash
 ln -s /path/to/agent-bridge/scripts/start_session.sh ~/.local/bin/agent-session
 ```
+
+## Cursor and other agents
+
+Claude Code is the only agent with a hook that means "blocked on you". The
+bridge still reaches the others, by two different routes, and the reply path
+is the same one: text is typed into that tmux pane.
+
+| How you run it | What reaches your phone | What a reply can do |
+|---|---|---|
+| `claude` in tmux | Claude's Notification hook | Type the answer, including `pick` |
+| `cursor` / `codex` / `gemini` in tmux | The pane watcher, once the screen goes idle on a prompt | Type `y`, `n`, or whatever the prompt is asking |
+| Cursor IDE, or the Cursor CLI when hooks are installed | `beforeShellExecution`: the command it wants to run. `stop`: it finished | Nothing inside the IDE. Approve with Cursor's own Run button |
+
+```bash
+python scripts/install_cursor.py          # ~/.cursor/hooks.json, safe to re-run
+python scripts/install_cursor.py --uninstall
+```
+
+The Cursor hook reports the command and exits. It does not return `allow` or
+`ask`. `allow` would approve the command. `ask` would pretend the phone can
+press Run, and holding the hook open until you reply would freeze the agent
+until Cursor gave up. A Discord reply still only types into tmux.
+
+`codex` and `gemini` share one prompt pattern, the same one `watch_pane.sh`
+has always used. It is a heuristic. When it misses, set `PROMPT_REGEX` for
+that tool. `AGENT_BRIDGE_POLL=0` starts the session without the watcher.
 
 ## Complete flow
 
