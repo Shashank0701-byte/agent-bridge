@@ -17,9 +17,6 @@ import time
 from pathlib import Path
 
 import discord
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Filled in by main() rather than read at import, so the pure helpers below
 # (compose_answer, the target patterns) can be imported and unit tested with
@@ -477,6 +474,10 @@ async def on_message(message: discord.Message):
 
 def main():
     global BOT_TOKEN, ALLOWED_USER_ID
+    root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root / "hooks" / "lib"))
+    import bridge
+    bridge.load_env(root)
     try:
         BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
         ALLOWED_USER_ID = int(os.environ["DISCORD_USER_ID"])

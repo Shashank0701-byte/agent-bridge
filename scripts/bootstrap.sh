@@ -84,16 +84,26 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # ------------------------------------------------------------------- .env ---
 step "Credentials"
+# A checkout already has .env in the repo. An installed package must not write
+# secrets into site-packages, so those go to ~/.agent-bridge/.env.
 if [ -f "$REPO/.env" ]; then
+  ENV_FILE="$REPO/.env"
   skip ".env exists (leaving it alone)"
 else
-  cp "$REPO/.env.example" "$REPO/.env"
-  ok "created .env from the example - you must fill in DISCORD_BOT_TOKEN and DISCORD_USER_ID"
+  mkdir -p "$HOME/.agent-bridge"
+  ENV_FILE="$HOME/.agent-bridge/.env"
+  if [ -f "$ENV_FILE" ]; then
+    skip ".env exists at $ENV_FILE"
+  else
+    cp "$REPO/.env.example" "$ENV_FILE"
+    ok "created $ENV_FILE - you must fill in DISCORD_BOT_TOKEN and DISCORD_USER_ID"
+  fi
 fi
+export AGENT_BRIDGE_ENV_FILE="$ENV_FILE"
 # A .env saved on Windows carries CRLF, which smuggles \r into the bot token and
 # produces a 401 that looks exactly like a wrong token.
-if [ -f "$REPO/.env" ] && LC_ALL=C grep -qU $'\r' "$REPO/.env" 2>/dev/null; then
-  python3 - "$REPO/.env" <<'PY'
+if [ -f "$ENV_FILE" ] && LC_ALL=C grep -qU $'\r' "$ENV_FILE" 2>/dev/null; then
+  python3 - "$ENV_FILE" <<'PY'
 import sys
 p = sys.argv[1]
 b = open(p, "rb").read()
@@ -109,7 +119,7 @@ fi
 #
 # Only with a terminal and outside CI: the bootstrap smoke test must never block
 # on a prompt.
-if grep -q 'your-bot-token\|your_numeric' "$REPO/.env" 2>/dev/null \
+if grep -q 'your-bot-token\|your_numeric' "$ENV_FILE" 2>/dev/null \
    && [ -t 0 ] && [ -z "${CI:-}" ]; then
   printf '\n'
   read -r -p "    Set up the Discord bot now? [Y/n] " REPLY_SETUP
@@ -143,7 +153,7 @@ fi
 
 # -------------------------------------------------------------------- bot ---
 step "Bot"
-if [ -f "$REPO/.env" ] && ! grep -q 'your-bot-token\|your_numeric' "$REPO/.env"; then
+if [ -f "$ENV_FILE" ] && ! grep -q 'your-bot-token\|your_numeric' "$ENV_FILE"; then
   bash "$REPO/scripts/bot_ctl.sh" restart >/dev/null 2>&1
   BOT_UP=0
   # Poll instead of sleeping a fixed time: launching the supervisor from a
@@ -175,7 +185,7 @@ chk "tmux"        "$(command -v tmux >/dev/null && tmux -V || echo MISSING)"
 chk "python venv" "$([ -x "$VENV/bin/python" ] && echo OK || echo MISSING)"
 chk "discord.py"  "$("$VENV/bin/python" -c 'import discord;print(discord.__version__)' 2>/dev/null || echo MISSING)"
 chk "claude"      "$(claude --version 2>/dev/null || echo MISSING)"
-chk "hooks wired" "$(grep -c notify.sh "$HOME/.claude/settings.json" 2>/dev/null || echo 0)"
+chk "hooks wired" "$(grep -cE 'notify\.(sh|py)' "$HOME/.claude/settings.json" 2>/dev/null || echo 0)"
 chk "wrapper"     "$([ -x "$HOME/.agent-bridge/bin/claude" ] && echo OK || echo 'not installed')"
 chk "logged in"   "$([ -f "$HOME/.claude/.credentials.json" ] && echo yes || echo 'NO')"
 BOT_NOW="$(bash "$REPO/scripts/bot_ctl.sh" status 2>/dev/null)"
@@ -191,8 +201,8 @@ fi
 
 printf '\033[1mNext:\033[0m\n'
 n=1
-if grep -q 'your-bot-token\|your_numeric' "$REPO/.env" 2>/dev/null; then
-  printf '  %d. Fill in %s (see the README for how to create the Discord bot)\n' "$n" "$REPO/.env"; n=$((n+1))
+if grep -q 'your-bot-token\|your_numeric' "$ENV_FILE" 2>/dev/null; then
+  printf '  %d. Fill in %s (see the README for how to create the Discord bot)\n' "$n" "$ENV_FILE"; n=$((n+1))
   printf '  %d. Re-run this script to start the bot\n' "$n"; n=$((n+1))
 fi
 [ -f "$HOME/.claude/.credentials.json" ] || { printf '  %d. claude auth login\n' "$n"; n=$((n+1)); }

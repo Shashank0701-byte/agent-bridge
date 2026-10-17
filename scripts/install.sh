@@ -39,7 +39,28 @@ if os.path.exists(settings_path):
         sys.exit(f"install.sh: {settings_path} is not valid JSON ({e}); fix it and re-run")
 
 
-OUR_SCRIPTS = ("notify.sh", "ask_options.sh")
+OUR_SCRIPTS = ("notify.sh", "ask_options.sh", "notify.py", "ask_options.py")
+
+
+def use_package_python(tree, python):
+    """Point hook commands at notify.py via the interpreter that has the
+    install. A bare `python` on PATH cannot see a pipx venv. Left unset, the
+    .sh shims stay, which is what a checkout's install.sh has always written.
+    """
+    if not python:
+        return
+    interp = f'"{python}"' if " " in python else python
+    for entries in tree.values():
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                command = hook.get("command") or ""
+                parts = command.split()
+                if not parts or not parts[0].endswith(".sh"):
+                    continue
+                script = parts[0][:-3] + ".py"
+                script_q = f'"{script}"' if " " in script else script
+                rest = " ".join(parts[1:])
+                hook["command"] = f"{interp} {script_q}" + (f" {rest}" if rest else "")
 
 
 def ours(entry):
@@ -47,6 +68,8 @@ def ours(entry):
     return any(any(name in (h.get("command") or "") for name in OUR_SCRIPTS)
                for h in entry.get("hooks", []))
 
+
+use_package_python(new.get("hooks") or {}, os.environ.get("AGENT_BRIDGE_PYTHON"))
 
 hooks = current.get("hooks") or {}
 for event, entries in (new.get("hooks") or {}).items():

@@ -1,16 +1,15 @@
 #!/bin/sh
-# One-command install for macOS, Linux, and an existing WSL distro:
+# Install the agent-bridge command without leaving a git checkout behind:
 #
 #   curl -fsSL https://gitlab.com/shashankchakraborty712005/agent-bridge/-/raw/main/scripts/get.sh | sh
 #
-# Clones the repo and hands over to bootstrap.sh, which does the real work and
-# is safe to re-run. Windows without WSL starts from install.ps1 instead --
-# see the README.
+# That installs with pipx (or uv) and then runs `agent-bridge setup`.
+# Until the name is on PyPI the package is fetched from git. A local directory
+# in AGENT_BRIDGE_REPO is installed as itself, which is how CI tests a commit
+# without cloning it a second time.
 #
-# Overrides, all optional:
-#   AGENT_BRIDGE_DIR    where to put it        (default ~/agent-bridge)
-#   AGENT_BRIDGE_REPO   what to clone
-#   AGENT_BRIDGE_REF    branch, tag or commit  (default main)
+#   AGENT_BRIDGE_REPO   git URL or a local checkout
+#   AGENT_BRIDGE_REF    branch, tag or commit (default main; git URLs only)
 #
 # POSIX sh on purpose: this is the one file people run before they have
 # anything, so it must work under dash and ash, not just bash.
@@ -18,53 +17,56 @@ set -eu
 
 REPO_URL="${AGENT_BRIDGE_REPO:-https://gitlab.com/shashankchakraborty712005/agent-bridge.git}"
 REF="${AGENT_BRIDGE_REF:-main}"
-DIR="${AGENT_BRIDGE_DIR:-$HOME/agent-bridge}"
 
 say()  { printf '\n==> %s\n' "$1"; }
 die()  { printf 'get.sh: %s\n' "$1" >&2; exit 1; }
 
-need() {
-  command -v "$1" >/dev/null 2>&1 && return 0
-  if command -v apt-get >/dev/null 2>&1; then hint="sudo apt-get install -y $1"
-  elif command -v dnf >/dev/null 2>&1;   then hint="sudo dnf install -y $1"
-  elif command -v brew >/dev/null 2>&1;  then hint="brew install $1"
-  else hint="install $1 with your package manager"
+# A checkout path is installed from disk. Anything else is a git URL.
+spec() {
+  if [ -d "$REPO_URL" ]; then
+    printf '%s\n' "$REPO_URL"
+  else
+    printf 'git+%s@%s\n' "$REPO_URL" "$REF"
   fi
-  die "$1 is required but not installed. Try: $hint"
+}
+
+install_package() {
+  spec_value="$(spec)"
+  if command -v pipx >/dev/null 2>&1; then
+    pipx install --force "$spec_value"
+  elif command -v uv >/dev/null 2>&1; then
+    uv tool install --reinstall "$spec_value"
+  else
+    die "pipx or uv is required, so this can install a command instead of cloning. Try: pip install pipx"
+  fi
 }
 
 main() {
   say "agent-bridge"
-  need git
+  install_package
 
-  if [ -d "$DIR/.git" ]; then
-    printf '    updating the copy already in %s\n' "$DIR"
-    git -C "$DIR" fetch --quiet origin "$REF" || die "could not fetch $REF from origin"
-    git -C "$DIR" checkout --quiet FETCH_HEAD || die "could not check out $REF"
-  elif [ -e "$DIR" ]; then
-    die "$DIR already exists and is not a git clone. Move it, or set AGENT_BRIDGE_DIR."
-  else
-    printf '    cloning into %s\n' "$DIR"
-    git clone --quiet "$REPO_URL" "$DIR" || die "could not clone $REPO_URL"
-    git -C "$DIR" checkout --quiet "$REF" 2>/dev/null || true
+  # pipx and uv put the command in ~/.local/bin, which a fresh shell may not
+  # have on PATH yet.
+  if ! command -v agent-bridge >/dev/null 2>&1 && [ -x "$HOME/.local/bin/agent-bridge" ]; then
+    PATH="$HOME/.local/bin:$PATH"
+    export PATH
   fi
-
-  [ -f "$DIR/scripts/bootstrap.sh" ] || die "$DIR does not look like agent-bridge"
+  command -v agent-bridge >/dev/null 2>&1 \
+    || die "the package installed, but agent-bridge is not on PATH. Open a new shell, or add ~/.local/bin."
 
   # Piped into sh, stdin is the script itself rather than the keyboard, so
-  # bootstrap.sh would silently skip the guided Discord setup. Hand it the
-  # terminal back where there is one.
+  # setup would silently skip the guided Discord setup. Hand it the terminal
+  # back where there is one.
   #
   # Opening /dev/tty is the test, not `[ -r /dev/tty ]`. The latter calls
   # access(), which answers a question about permissions -- and it says yes on
   # a process with no controlling terminal, where the open then fails with
-  # ENXIO. That is every container, cron job and `ssh host '... | sh'`, and it
-  # would take the whole install down with "cannot open /dev/tty".
-  say "handing over to bootstrap.sh"
+  # ENXIO. That is every container, cron job and `ssh host '... | sh'`.
+  say "handing over to agent-bridge setup"
   if [ ! -t 0 ] && (exec 3</dev/tty) 2>/dev/null; then
-    bash "$DIR/scripts/bootstrap.sh" "$@" < /dev/tty
+    agent-bridge setup "$@" < /dev/tty
   else
-    bash "$DIR/scripts/bootstrap.sh" "$@"
+    agent-bridge setup "$@"
   fi
 }
 
