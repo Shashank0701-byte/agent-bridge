@@ -12,8 +12,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 GET_SH = ROOT / "scripts" / "get.sh"
+SH = shutil.which("sh")
 
-pytestmark = pytest.mark.skipif(not shutil.which("sh"), reason="needs a POSIX sh")
+pytestmark = pytest.mark.skipif(not SH, reason="needs a POSIX sh")
 
 
 @pytest.fixture
@@ -43,7 +44,7 @@ def run_get(fakes, extra=(), repo=None, detached=True):
     if repo is not None:
         env["AGENT_BRIDGE_REPO"] = str(repo)
     proc = subprocess.run(
-        ["sh", str(GET_SH), *extra],
+        [SH, str(GET_SH), *extra],
         env=env, capture_output=True, text=True, timeout=60,
         stdin=subprocess.DEVNULL, start_new_session=detached,
     )
@@ -85,7 +86,7 @@ def test_a_missing_pipx_and_uv_is_reported_with_a_way_to_fix_it(tmp_path):
     empty = tmp_path / "nothing"
     empty.mkdir()
     proc = subprocess.run(
-        [shutil.which("sh"), str(GET_SH)],
+        [SH, str(GET_SH)],
         env={"PATH": str(empty), "HOME": str(tmp_path)},
         capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
     )
@@ -99,7 +100,7 @@ def test_a_truncated_download_does_nothing_at_all(fraction, tmp_path):
     defines a function and stops rather than running half an installer."""
     head = GET_SH.read_text()[: int(len(GET_SH.read_text()) * fraction)]
     proc = subprocess.run(
-        [shutil.which("sh"), "-c", head], capture_output=True, text=True,
+        [SH, "-c", head], capture_output=True, text=True,
         timeout=60, stdin=subprocess.DEVNULL,
         env=dict(os.environ, PATH=str(tmp_path), HOME=str(tmp_path)),
     )

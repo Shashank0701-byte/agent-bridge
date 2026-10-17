@@ -27,9 +27,14 @@ fi
 head_ "A bare container has none of this"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq git curl ca-certificates python3 python3-venv python3-pip >/dev/null 2>&1
-python3 -m pip install -q pipx \
-  && pass "pipx installed" || fail "could not install pipx"
+apt-get install -y -qq git curl ca-certificates python3 python3-venv python3-pip pipx >/dev/null 2>&1
+if command -v pipx >/dev/null 2>&1 \
+   || python3 -m pip install --break-system-packages -q pipx \
+   || python3 -m pip install -q pipx; then
+  pass "pipx installed"
+else
+  fail "could not install pipx"
+fi
 
 if ! command -v sudo >/dev/null; then
   printf '#!/bin/sh\nexec env "$@"\n' > /usr/local/bin/sudo
